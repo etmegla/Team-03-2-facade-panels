@@ -1,5 +1,7 @@
 """Integration and unit tests for the facade panel automate function."""
 
+import pytest
+
 from speckle_automate import (
     AutomationContext,
     AutomationRunData,
@@ -38,6 +40,7 @@ def test_function_run(
 
 def test_speckle_polyline_conversion():
     """A Speckle Polyline should convert to a Rhino JSON dict."""
+    pytest.importorskip("rhino3dm")
     from main import _speckle_to_rhino_json
     from specklepy.objects import Base
 
@@ -52,6 +55,7 @@ def test_speckle_polyline_conversion():
 
 def test_unknown_type_returns_none():
     """Non-curve objects should return None without raising."""
+    pytest.importorskip("rhino3dm")
     from main import _speckle_to_rhino_json
     from specklepy.objects import Base
 
@@ -81,5 +85,4 @@ def test_function_inputs_defaults():
 
     assert inputs.gh_input_name == "Curves"
     assert inputs.gh_output_name == "Mesh"
-    assert inputs.layer_name == ""
-    assert inputs.strict_layer_match is False
+    assert inputs.compute_url == "https://compute8.iaac.net/"

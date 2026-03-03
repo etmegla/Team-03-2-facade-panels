@@ -11,8 +11,6 @@ import sys
 from collections.abc import Iterable
 
 import requests
-import rhino3dm
-from compute_rhino3d import Grasshopper, Util
 from pydantic import Field, SecretStr
 from speckle_automate import (
     AutomateBase,
@@ -24,6 +22,17 @@ from specklepy.objects import Base
 from flatten import flatten_base
 
 logger = logging.getLogger(__name__)
+
+try:
+    import rhino3dm
+except Exception:  # pragma: no cover - depends on local env
+    rhino3dm = None
+
+try:
+    from compute_rhino3d import Grasshopper, Util
+except Exception:  # pragma: no cover - depends on local env
+    Grasshopper = None
+    Util = None
 
 CURVE_TYPES = (
     "Objects.Geometry.Curve",
@@ -182,6 +191,9 @@ def _iter_base_with_inherited_layers(
 
 def _speckle_to_rhino_json(obj: Base) -> dict | None:
     """Convert a Speckle curve object to a rhino3dm-encoded JSON dict."""
+    if rhino3dm is None:
+        raise RuntimeError("rhino3dm is not installed in this environment")
+
     st = getattr(obj, "speckle_type", "")
 
     if "Polyline" in st or "Line" in st:
@@ -226,6 +238,9 @@ def _run_grasshopper(
     inputs: FunctionInputs,
 ) -> dict:
     """Send curves to Rhino Compute and return the raw result dict."""
+    if Grasshopper is None or Util is None:
+        raise RuntimeError("compute-rhino3d is not installed in this environment")
+
     Util.url = inputs.compute_url
     Util.apiKey = inputs.compute_api_key.get_secret_value()
 
@@ -250,14 +265,15 @@ def _parse_mesh_output(gh_result: dict, output_name: str) -> list[Base]:
                     continue
                 try:
                     geo_dict = json.loads(raw) if isinstance(raw, str) else raw
-                    rh_obj = rhino3dm.CommonObject.Decode(geo_dict)
                     panel = Base()
                     panel["speckle_type"] = "Objects.Geometry.Mesh"
                     panel["rhinoData"] = geo_dict
                     panel["generatedBy"] = "facade-panel-automate"
-                    if hasattr(rh_obj, "Faces"):
-                        panel["vertexCount"] = len(rh_obj.Vertices)
-                        panel["faceCount"] = rh_obj.Faces.Count
+                    if rhino3dm is not None:
+                        rh_obj = rhino3dm.CommonObject.Decode(geo_dict)
+                        if hasattr(rh_obj, "Faces"):
+                            panel["vertexCount"] = len(rh_obj.Vertices)
+                            panel["faceCount"] = rh_obj.Faces.Count
                     panels.append(panel)
                 except Exception as e:
                     logger.warning("Could not decode mesh object: %s", e)
