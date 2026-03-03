@@ -172,3 +172,132 @@ The line `python -u main.py run` is the command run inside the Docker Container 
 ## Resources
 
 - [Learn](https://speckle.guide/dev/python.html) more about SpecklePy and interacting with Speckle from Python.
+
+#ETM Notes
+
+# Facade Panel Generator — Speckle Automate Function
+
+A Speckle Automate function that:
+
+1. **Receives** a model version (triggered automatically when a new version is published).
+2. **Extracts** curve objects (Rhino/Grasshopper base curves for the facade panels).
+3. **Sends** those curves to a **Rhino Compute** server, running your Grasshopper `.gh` definition.
+4. **Publishes** the generated facade panel geometry as a new version in a target Speckle model.
+
+---
+
+## How it works
+
+```
+Speckle Model (trigger)
+        │  curves
+        ▼
+[Speckle Automate]
+        │  specklepy → rhino3dm JSON
+        ▼
+[Rhino Compute Server]  ←── your .gh file
+        │  panel geometry (Brep / Mesh)
+        ▼
+[Speckle Automate]
+        │  publish
+        ▼
+Speckle Model (output)
+```
+
+---
+
+## Repository structure
+
+```
+facade-panel-function/
+├── .github/workflows/main.yml    # Build & deploy pipeline
+├── tests/
+│   └── test_function.py          # Integration + unit tests
+├── .env.example                  # Environment variable template
+├── .gitignore
+├── Dockerfile
+├── flatten.py                    # Speckle object tree utility (from template)
+├── main.py                       # ← YOUR FUNCTION (entry point)
+├── pyproject.toml                # Dependencies
+└── README.md
+```
+
+---
+
+## Function Inputs (configured in the Speckle UI)
+
+| Input | Description | Default |
+|---|---|---|
+| `compute_url` | Rhino Compute server URL | `https://compute8.iaac.net/` |
+| `compute_api_key` | API key for Rhino Compute | *(required)* |
+| `grasshopper_definition_url` | Public URL to your `.gh` file | *(required)* |
+| `curve_speckle_type` | `speckle_type` filter for input curves | `Objects.Geometry.Curve` |
+| `gh_curve_input_name` | Grasshopper input parameter name | `Curves` |
+| `gh_panel_output_name` | Grasshopper output parameter name | `Panels` |
+| `panel_type` | Panel geometry type (`flat`, `folded`, `perforated`) | `flat` |
+| `panel_depth` | Panel extrusion depth in metres | `0.2` |
+| `target_model_id` | Speckle model to publish panels into | *(required)* |
+| `output_version_message` | Commit message for the output version | *(optional)* |
+
+---
+
+## Grasshopper definition requirements
+
+Your `.gh` file must expose:
+
+- **Input**: a parameter named `Curves` (configurable) — accepts a list of curves.
+- **Input**: a parameter named `PanelType` — string (`flat` / `folded` / `perforated`).
+- **Input**: a parameter named `PanelDepth` — number (metres).
+- **Output**: a parameter named `Panels` (configurable) — returns Brep or Mesh geometry.
+
+The `.gh` file must be accessible via a public URL at runtime (e.g. a raw GitHub URL).
+
+---
+
+## Local development
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/YOUR_ORG/facade-panel-function.git
+cd facade-panel-function
+
+# 2. Create a virtual environment
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+
+# 3. Install dependencies (including dev tools)
+pip install ".[dev]"
+
+# 4. Copy and fill in env vars
+cp .env.example .env
+# edit .env with your Speckle token, project ID, automation ID
+
+# 5. Run tests
+pytest
+```
+
+---
+
+## Deploying
+
+1. Push your code to GitHub.
+2. Create a **GitHub Release** (e.g. tag `v1.0.0`).
+3. The GitHub Action builds the Docker image and registers the function with Speckle Automate.
+4. In Speckle, create an **Automation** that links this function to your source model.
+
+### Required GitHub secrets
+
+| Secret | Where to find it |
+|---|---|
+| `SPECKLE_TOKEN` | Speckle → Profile → Access Tokens |
+| `SPECKLE_SERVER_URL` | e.g. `https://app.speckle.systems/` |
+| `SPECKLE_FUNCTION_ID` | Speckle → Functions → your function → ID |
+
+---
+
+## References
+
+- [Speckle Automate docs](https://docs.speckle.systems/developers/automate/)
+- [Rhino Compute docs](https://developer.rhino3d.com/guides/compute/)
+- [compute-rhino3d Python SDK](https://github.com/mcneel/compute.rhino3d.appserver)
+- [rhino3dm Python](https://github.com/mcneel/rhino3dm)

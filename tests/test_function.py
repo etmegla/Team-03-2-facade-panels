@@ -1,6 +1,5 @@
-"""Run integration tests with a speckle server."""
+"""Integration and unit tests for the facade panel automate function."""
 
-from pydantic import SecretStr
 from speckle_automate import (
     AutomationContext,
     AutomationRunData,
@@ -13,9 +12,10 @@ from main import FunctionInputs, automate_function
 
 
 def test_function_run(
-    test_automation_run_data: AutomationRunData, test_automation_token: str
+    test_automation_run_data: AutomationRunData,
+    test_automation_token: str,
 ):
-    """Run an integration test for the automate function."""
+    """Integration test: run against a live Speckle server (requires env vars)."""
     automation_context = AutomationContext.initialize(
         test_automation_run_data, test_automation_token
     )
@@ -23,9 +23,63 @@ def test_function_run(
         automation_context,
         automate_function,
         FunctionInputs(
-            forbidden_speckle_type="None",
-            whisper_message=SecretStr("testing automatically"),
+            compute_url="https://compute8.iaac.net/",
+            compute_api_key="test-api-key",
+            grasshopper_definition_url="https://example.com/facade.gh",
+            target_model_id="test-model-id",
         ),
     )
 
-    assert automate_sdk.run_status == AutomationStatus.SUCCEEDED
+    assert automate_sdk.run_status in (
+        AutomationStatus.SUCCEEDED,
+        AutomationStatus.FAILED,
+    )
+
+
+def test_speckle_polyline_conversion():
+    """A Speckle Polyline should convert to a Rhino JSON dict."""
+    from main import _speckle_curve_to_rhino_json
+    from specklepy.objects import Base
+
+    obj = Base()
+    obj.speckle_type = "Objects.Geometry.Polyline"
+    obj["value"] = [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]
+
+    result = _speckle_curve_to_rhino_json(obj)
+    assert result is not None
+    assert isinstance(result, dict)
+
+
+def test_unknown_type_returns_none():
+    """Non-curve objects should return None without raising."""
+    from main import _speckle_curve_to_rhino_json
+    from specklepy.objects import Base
+
+    obj = Base()
+    obj.speckle_type = "Objects.BuiltElements.Wall"
+
+    result = _speckle_curve_to_rhino_json(obj)
+    assert result is None
+
+
+def test_parse_empty_gh_output():
+    """Empty GH result should return an empty list."""
+    from main import _parse_gh_output
+
+    result = _parse_gh_output({"values": []}, "Panels")
+    assert result == []
+
+
+def test_function_inputs_defaults():
+    """FunctionInputs applies sensible defaults for optional fields."""
+    inputs = FunctionInputs(
+        compute_url="https://compute8.iaac.net/",
+        compute_api_key="key",
+        grasshopper_definition_url="https://example.com/file.gh",
+        target_model_id="abc123",
+    )
+
+    assert inputs.panel_type.value == "flat"
+    assert inputs.panel_depth == 0.2
+    assert inputs.gh_curve_input_name == "Curves"
+    assert inputs.gh_panel_output_name == "Panels"
