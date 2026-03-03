@@ -10,7 +10,7 @@ import logging
 import sys
 from base64 import b64decode
 from collections.abc import Iterable
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import requests
 from pydantic import Field, SecretStr
@@ -252,10 +252,38 @@ def _normalize_github_file_url(url: str) -> str:
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{file_path}"
 
 
+def _gh_url_variants(url: str) -> list[str]:
+    """Build likely URL variants for GH files (space/underscore tolerant)."""
+    normalized = _normalize_github_file_url(url)
+    parsed = urlparse(normalized)
+    path_parts = [p for p in parsed.path.split("/") if p]
+    if len(path_parts) < 1:
+        return [normalized]
+
+    filename = path_parts[-1]
+    decoded = unquote(filename)
+    variants: list[str] = [normalized]
+
+    candidates = {decoded}
+    if "_" in decoded:
+        candidates.add(decoded.replace("_", " "))
+    if " " in decoded:
+        candidates.add(decoded.replace(" ", "_"))
+
+    for candidate in candidates:
+        encoded_name = quote(candidate)
+        new_parts = path_parts[:-1] + [encoded_name]
+        rebuilt = f"{parsed.scheme}://{parsed.netloc}/{'/'.join(new_parts)}"
+        if rebuilt not in variants:
+            variants.append(rebuilt)
+
+    return variants
+
+
 def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> list[int]:
     """Download the .gh file and return it as a list of ints for compute SDK."""
-    normalized_url = _normalize_github_file_url(url)
-    logger.info("Fetching GH definition from %s", normalized_url)
+    candidates = _gh_url_variants(url)
+    logger.info("Fetching GH definition from %s", candidates[0])
 
     headers: dict[str, str] = {}
     if github_token is not None:
@@ -263,25 +291,41 @@ def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> lis
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
-    response = requests.get(normalized_url, timeout=60, headers=headers)
-    if response.ok:
-        return list(response.content)
+    last_response = None
+    for candidate in candidates:
+        response = requests.get(candidate, timeout=60, headers=headers)
+        if response.ok:
+            return list(response.content)
+        if response.status_code != 404:
+            response.raise_for_status()
+        last_response = response
 
-    api_url = _raw_url_to_github_contents_api(normalized_url)
-    if api_url and "Authorization" in headers:
+    if "Authorization" in headers:
         api_headers = {
             "Authorization": headers["Authorization"],
             "Accept": "application/vnd.github+json",
         }
-        api_response = requests.get(api_url, timeout=60, headers=api_headers)
-        api_response.raise_for_status()
-        payload = api_response.json()
-        encoded = payload.get("content", "")
-        if not encoded:
-            raise RuntimeError("GitHub contents API response did not include file content")
-        return list(b64decode(encoded))
+        for candidate in candidates:
+            api_url = _raw_url_to_github_contents_api(candidate)
+            if not api_url:
+                continue
+            api_response = requests.get(api_url, timeout=60, headers=api_headers)
+            if api_response.ok:
+                payload = api_response.json()
+                encoded = payload.get("content", "")
+                if not encoded:
+                    raise RuntimeError(
+                        "GitHub contents API response did not include file content"
+                    )
+                return list(b64decode(encoded))
+            if api_response.status_code != 404:
+                api_response.raise_for_status()
+            last_response = api_response
 
-    response.raise_for_status()
+    if last_response is not None:
+        last_response.raise_for_status()
+
+    raise RuntimeError("Failed to download Grasshopper definition")
     return []
 
 

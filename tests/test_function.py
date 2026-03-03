@@ -99,6 +99,26 @@ def test_normalize_github_blob_url() -> None:
     assert _normalize_github_file_url(url) == expected
 
 
+def test_gh_url_variants_include_underscore_space_alternatives() -> None:
+    """GH URL variants should include both underscore and space filenames."""
+    from main import _gh_url_variants
+
+    url = (
+        "https://raw.githubusercontent.com/etmegla/Team-03-2-facade-panels/"
+        "main/assets/Team03.2_Final_Assignment.gh"
+    )
+    variants = _gh_url_variants(url)
+
+    assert (
+        "https://raw.githubusercontent.com/etmegla/Team-03-2-facade-panels/"
+        "main/assets/Team03.2_Final_Assignment.gh"
+    ) in variants
+    assert (
+        "https://raw.githubusercontent.com/etmegla/Team-03-2-facade-panels/"
+        "main/assets/Team03.2%20Final%20Assignment.gh"
+    ) in variants
+
+
 def test_function_inputs_defaults():
     """FunctionInputs applies sensible defaults for optional fields."""
     inputs = FunctionInputs(
