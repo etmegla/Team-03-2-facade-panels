@@ -74,6 +74,16 @@ def test_parse_empty_gh_output():
     assert result == []
 
 
+def test_rhino_encode_to_dict_normalizes_input_types():
+    """Rhino encode normalization accepts dict and JSON bytes/str."""
+    from main import _rhino_encode_to_dict
+
+    payload = {"a": 1}
+    assert _rhino_encode_to_dict(payload) == payload
+    assert _rhino_encode_to_dict('{"a": 1}') == payload
+    assert _rhino_encode_to_dict(b'{"a": 1}') == payload
+
+
 def test_function_inputs_defaults():
     """FunctionInputs applies sensible defaults for optional fields."""
     inputs = FunctionInputs(

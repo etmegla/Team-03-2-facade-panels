@@ -189,6 +189,18 @@ def _iter_base_with_inherited_layers(
             yield from _iter_base_with_inherited_layers(child, effective_layers)
 
 
+def _rhino_encode_to_dict(encoded: object) -> dict | None:
+    """Normalize rhino3dm Encode() output to a Python dict."""
+    if isinstance(encoded, dict):
+        return encoded
+
+    if isinstance(encoded, (str, bytes, bytearray)):
+        parsed = json.loads(encoded)
+        return parsed if isinstance(parsed, dict) else None
+
+    return None
+
+
 def _speckle_to_rhino_json(obj: Base) -> dict | None:
     """Convert a Speckle curve object to a rhino3dm-encoded JSON dict."""
     if rhino3dm is None:
@@ -202,7 +214,8 @@ def _speckle_to_rhino_json(obj: Base) -> dict | None:
             pl = rhino3dm.Polyline()
             for i in range(0, len(pts), 3):
                 pl.Add(pts[i], pts[i + 1], pts[i + 2])
-            return json.loads(pl.ToPolylineCurve().Encode())
+            encoded = pl.ToPolylineCurve().Encode()
+            return _rhino_encode_to_dict(encoded)
 
     if "Curve" in st:
         degree = getattr(obj, "degree", 3)
@@ -221,7 +234,7 @@ def _speckle_to_rhino_json(obj: Base) -> dict | None:
             rhino_knot_count = point_count + degree - 1
             for i in range(min(len(knots), rhino_knot_count)):
                 nc.Knots[i] = knots[i]
-            return json.loads(nc.Encode())
+            return _rhino_encode_to_dict(nc.Encode())
 
     return None
 
