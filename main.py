@@ -1,8 +1,6 @@
 """Extract Floor Plate Curves from the trigger model and publish to the slab curves model."""
 
 import logging
-import sys
-from collections.abc import Iterable
 
 from pydantic import Field
 from speckle_automate import (
@@ -36,12 +34,11 @@ class FunctionInputs(AutomateBase):
         ),
     )
     layer_name: str = Field(
-        default="3D-Model::Structure::Floor Plate Curve",
+        default="Floor Plate Curve",
         title="Layer Name Filter",
         description=(
-            "Only extract objects on this Rhino layer. "
-            "Must match exactly as it appears in Rhino (case-sensitive). "
-            "Leave empty to extract all curve types."
+            "Name of the layer collection to extract curves from. "
+            "Use just the leaf name e.g. 'Floor Plate Curve', not the full path."
         ),
     )
     version_message: str = Field(
@@ -51,101 +48,40 @@ class FunctionInputs(AutomateBase):
     )
 
 
-def _matches_layer(obj: Base, layer_name: str) -> bool:
-    """Check if a Speckle object belongs to the given Rhino layer.
-
-    Speckle stores the Rhino layer in different places depending on
-    the connector version — check all known locations.
-    """
-    if not layer_name:
-        return True  # no filter — accept everything
-
-    normalized_filter = layer_name.strip()
-    candidate_layers = _extract_layer_candidates(obj)
-
-    return _match_layer_candidates(candidate_layers, normalized_filter)
+def _get_children(obj: Base) -> list:
+    """Get child objects from any of the known container attributes."""
+    for attr in ("elements", "@elements", "objects", "@objects"):
+        children = getattr(obj, attr, None)
+        if children and isinstance(children, list):
+            return children
+    return []
 
 
-def _extract_layer_candidates(obj: Base) -> set[str]:
-    """Read all layer-like string values that may be attached to an object."""
-    candidate_layers: set[str] = set()
+def _find_layer_collection(obj: Base, target_name: str) -> Base | None:
+    """Recursively find the collection object whose name matches target_name."""
+    name = getattr(obj, "name", None)
+    if name and target_name.lower() in name.lower():
+        return obj
 
-    top_layer = getattr(obj, "layer", None)
-    if isinstance(top_layer, str) and top_layer.strip():
-        candidate_layers.add(top_layer.strip())
+    for child in _get_children(obj):
+        if isinstance(child, Base):
+            result = _find_layer_collection(child, target_name)
+            if result is not None:
+                return result
 
-    cap_layer = getattr(obj, "Layer", None)
-    if isinstance(cap_layer, str) and cap_layer.strip():
-        candidate_layers.add(cap_layer.strip())
+    return None
 
-    props = getattr(obj, "properties", None)
-    if props:
-        prop_layer = getattr(props, "layer", None)
-        if isinstance(prop_layer, str) and prop_layer.strip():
-            candidate_layers.add(prop_layer.strip())
 
-        prop_cap_layer = getattr(props, "Layer", None)
-        if isinstance(prop_cap_layer, str) and prop_cap_layer.strip():
-            candidate_layers.add(prop_cap_layer.strip())
-
-    collection_type = getattr(obj, "collectionType", None)
+def _extract_curves(obj: Base, collected: list) -> None:
+    """Recursively extract all curve objects from a collection."""
     speckle_type = getattr(obj, "speckle_type", "")
-    is_layer_collection = isinstance(collection_type, str) and (
-        "layer" in collection_type.lower()
-    )
-    is_collection_type = isinstance(speckle_type, str) and speckle_type.endswith(
-        ".Collection"
-    )
-    if is_layer_collection or is_collection_type:
-        name = getattr(obj, "name", None)
-        if isinstance(name, str) and name.strip():
-            candidate_layers.add(name.strip())
-
-    return candidate_layers
-
-
-def _match_layer_candidates(candidate_layers: Iterable[str], layer_filter: str) -> bool:
-    """Match a set of candidate layer labels against a requested layer filter."""
-    normalized_filter = layer_filter.strip()
-    filter_leaf = normalized_filter.split("::")[-1].strip()
-
-    for candidate in candidate_layers:
-        normalized_candidate = candidate.strip()
-        if normalized_candidate == normalized_filter:
-            return True
-
-        # Accept when object stores a full layer path and filter is the last segment,
-        # or vice versa.
-        candidate_leaf = normalized_candidate.split("::")[-1].strip()
-        if candidate_leaf == filter_leaf:
-            return True
-
-        if normalized_candidate.endswith(f"::{normalized_filter}"):
-            return True
-
-        if normalized_filter.endswith(f"::{normalized_candidate}"):
-            return True
-
-    return False
-
-
-def _iter_base_with_inherited_layers(
-    root: Base,
-    inherited_layers: set[str] | None = None,
-) -> Iterable[tuple[Base, set[str]]]:
-    """Iterate object tree and carry layer labels from parent collections."""
-    inherited = inherited_layers or set()
-    node_layers = _extract_layer_candidates(root)
-    effective_layers = inherited | node_layers
-
-    yield root, effective_layers
-
-    elements = getattr(root, "elements", getattr(root, "@elements", None))
-    if elements is None:
+    if any(speckle_type.startswith(ct) for ct in CURVE_TYPES):
+        collected.append(obj)
         return
 
-    for element in elements:
-        yield from _iter_base_with_inherited_layers(element, effective_layers)
+    for child in _get_children(obj):
+        if isinstance(child, Base):
+            _extract_curves(child, collected)
 
 
 def automate_function(
@@ -157,50 +93,32 @@ def automate_function(
     # 1. Receive the trigger model
     version_root = automate_context.receive_version()
 
-    # 2. Traverse tree and retain inherited layer context
-    all_curves_with_layers = [
-        (obj, effective_layers)
-        for obj, effective_layers in _iter_base_with_inherited_layers(version_root)
-        if any(
-            getattr(obj, "speckle_type", "").startswith(ct)
-            for ct in CURVE_TYPES
-        )
-    ]
-
-    all_curves = [obj for obj, _ in all_curves_with_layers]
-
+    # 2. Find the layer collection by name
     layer_filter = function_inputs.layer_name.strip()
-    if layer_filter:
-        curve_objects = [
-            obj
-            for obj, effective_layers in all_curves_with_layers
-            if _matches_layer(obj, layer_filter)
-            or _match_layer_candidates(effective_layers, layer_filter)
-        ]
-    else:
-        curve_objects = all_curves
+    layer_collection = _find_layer_collection(version_root, layer_filter)
 
-    logger.info(
-        "Found %d total curves, %d on layer '%s'.",
-        len(all_curves),
-        len(curve_objects),
-        layer_filter,
-    )
-
-    if not curve_objects:
-        # Report which layers ARE present to help debug
-        layers_found: set[str] = set()
-        for _, effective_layers in all_curves_with_layers:
-            layers_found.update(effective_layers)
+    if layer_collection is None:
         automate_context.mark_run_failed(
-            f"No curves found on layer '{layer_filter}'. "
-            f"Total curves in model: {len(all_curves)}. "
-            f"Layers present: {', '.join(str(l) for l in layers_found if l)}. "
-            "Check the Layer Name Filter matches exactly."
+            f"Could not find a layer collection named '{layer_filter}' in the model. "
+            "Check the Layer Name Filter matches the name shown in the Speckle viewer."
         )
         return
 
-    # 3. Publish to the target model
+    logger.info("Found layer collection: %s", getattr(layer_collection, "name", "?"))
+
+    # 3. Extract all curves from that collection
+    curve_objects: list[Base] = []
+    _extract_curves(layer_collection, curve_objects)
+
+    logger.info("Extracted %d curves from layer '%s'.", len(curve_objects), layer_filter)
+
+    if not curve_objects:
+        automate_context.mark_run_failed(
+            f"Layer '{layer_filter}' was found but contains no curve objects."
+        )
+        return
+
+    # 4. Publish to the target model
     root = Base()
     root["@elements"] = curve_objects
     root["curveCount"] = len(curve_objects)
@@ -232,12 +150,4 @@ def automate_function(
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(
-            "Run this function via Speckle Automate CLI arguments, not as a plain script.\n"
-            "For local checks, use: pytest\n"
-            "For container-style execution, use: python -u main.py run <automationRunDataJson> <functionInputsJson> <token>"
-        )
-        raise SystemExit(0)
-
     execute_automate_function(automate_function, FunctionInputs)
