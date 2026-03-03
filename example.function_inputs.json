@@ -1,8 +1,9 @@
 {
   "speckleToken": "YOUR SPEKCLE TOKEN",
   "functionInputs": {
-    "whisperMessage": "you are doing something weird",
-    "forbiddenSpeckleType": "wall"
+    "target_model_id": "YOUR_TARGET_MODEL_ID",
+    "layer_name": "3D-Model::Structure::Floor Plate Curve",
+    "version_message": "Extracted floor plate curves"
   },
   "automationRunData": {
     "project_id": "project id",

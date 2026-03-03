@@ -36,7 +36,7 @@ class FunctionInputs(AutomateBase):
         ),
     )
     layer_name: str = Field(
-        default="Floor Plate Curve",
+        default="3D-Model::Structure::Floor Plate Curve",
         title="Layer Name Filter",
         description=(
             "Only extract objects on this Rhino layer. "
@@ -60,18 +60,43 @@ def _matches_layer(obj: Base, layer_name: str) -> bool:
     if not layer_name:
         return True  # no filter — accept everything
 
+    normalized_filter = layer_name.strip()
+    filter_leaf = normalized_filter.split("::")[-1].strip()
+
+    candidate_layers: set[str] = set()
+
     # Most common: top-level 'layer' property
-    if getattr(obj, "layer", None) == layer_name:
-        return True
+    top_layer = getattr(obj, "layer", None)
+    if isinstance(top_layer, str) and top_layer.strip():
+        candidate_layers.add(top_layer.strip())
 
     # Nested under 'properties' (older connectors)
     props = getattr(obj, "properties", None)
-    if props and getattr(props, "layer", None) == layer_name:
-        return True
+    if props:
+        prop_layer = getattr(props, "layer", None)
+        if isinstance(prop_layer, str) and prop_layer.strip():
+            candidate_layers.add(prop_layer.strip())
 
     # Sometimes stored as 'Layer' (capital L)
-    if getattr(obj, "Layer", None) == layer_name:
-        return True
+    cap_layer = getattr(obj, "Layer", None)
+    if isinstance(cap_layer, str) and cap_layer.strip():
+        candidate_layers.add(cap_layer.strip())
+
+    for candidate in candidate_layers:
+        if candidate == normalized_filter:
+            return True
+
+        # Accept when object stores a full layer path and filter is the last segment,
+        # or vice versa.
+        candidate_leaf = candidate.split("::")[-1].strip()
+        if candidate_leaf == filter_leaf:
+            return True
+
+        if candidate.endswith(f"::{normalized_filter}"):
+            return True
+
+        if normalized_filter.endswith(f"::{candidate}"):
+            return True
 
     return False
 
