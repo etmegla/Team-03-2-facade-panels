@@ -7,6 +7,8 @@ resulting mesh panels to the facade panels model.
 
 import json
 import logging
+import sys
+from collections.abc import Iterable
 
 import requests
 import rhino3dm
@@ -64,6 +66,22 @@ class FunctionInputs(AutomateBase):
         title="GH Output Parameter Name",
         description="Nickname of the Grasshopper output that returns the mesh panels.",
     )
+    layer_name: str = Field(
+        default="",
+        title="Layer Name Filter",
+        description=(
+            "Optional Rhino layer or collection name filter (e.g. 'Slab Curves' or "
+            "'3D-Model::Structure::Floor Plate Curve'). Leave empty to use all curves."
+        ),
+    )
+    strict_layer_match: bool = Field(
+        default=False,
+        title="Strict Layer Match",
+        description=(
+            "If true and layer_name is set, fail when no curves are found in that "
+            "layer. If false, fallback to all curves."
+        ),
+    )
     target_model_id: str = Field(
         title="Target Model ID",
         description=(
@@ -96,6 +114,70 @@ def _extract_all_curves(obj: Base, collected: list) -> None:
     for child in _get_children(obj):
         if isinstance(child, Base):
             _extract_all_curves(child, collected)
+
+
+def _extract_layer_candidates(obj: Base) -> set[str]:
+    """Collect possible layer labels attached to an object or collection node."""
+    candidates: set[str] = set()
+
+    for attr in ("layer", "Layer", "name"):
+        value = getattr(obj, attr, None)
+        if isinstance(value, str) and value.strip():
+            candidates.add(value.strip())
+
+    props = getattr(obj, "properties", None)
+    if props:
+        for attr in ("layer", "Layer", "name"):
+            value = getattr(props, attr, None)
+            if isinstance(value, str) and value.strip():
+                candidates.add(value.strip())
+
+    return candidates
+
+
+def _match_layer_candidates(candidates: Iterable[str], layer_filter: str) -> bool:
+    """Return True when any candidate matches the requested layer (path-aware)."""
+    if not layer_filter:
+        return True
+
+    normalized_filter = layer_filter.strip()
+    filter_leaf = normalized_filter.split("::")[-1].strip()
+
+    for candidate in candidates:
+        normalized_candidate = candidate.strip()
+        if not normalized_candidate:
+            continue
+
+        if normalized_candidate == normalized_filter:
+            return True
+
+        candidate_leaf = normalized_candidate.split("::")[-1].strip()
+        if candidate_leaf == filter_leaf:
+            return True
+
+        if normalized_candidate.endswith(f"::{normalized_filter}"):
+            return True
+
+        if normalized_filter.endswith(f"::{normalized_candidate}"):
+            return True
+
+    return False
+
+
+def _iter_base_with_inherited_layers(
+    root: Base,
+    inherited_layers: set[str] | None = None,
+) -> Iterable[tuple[Base, set[str]]]:
+    """Traverse the tree and carry parent layer labels to descendants."""
+    inherited = inherited_layers or set()
+    current_layers = _extract_layer_candidates(root)
+    effective_layers = inherited | current_layers
+
+    yield root, effective_layers
+
+    for child in _get_children(root):
+        if isinstance(child, Base):
+            yield from _iter_base_with_inherited_layers(child, effective_layers)
 
 
 def _speckle_to_rhino_json(obj: Base) -> dict | None:
@@ -192,9 +274,13 @@ def automate_function(
     # 1. Receive the trigger model (slab curves)
     version_root = automate_context.receive_version()
 
-    # 2. Extract all curves
-    curve_objects: list[Base] = []
-    _extract_all_curves(version_root, curve_objects)
+    # 2. Extract all curves (with inherited layer context)
+    curves_with_layers = [
+        (obj, layers)
+        for obj, layers in _iter_base_with_inherited_layers(version_root)
+        if any(getattr(obj, "speckle_type", "").startswith(ct) for ct in CURVE_TYPES)
+    ]
+    curve_objects = [obj for obj, _ in curves_with_layers]
 
     if not curve_objects:
         automate_context.mark_run_failed(
@@ -202,7 +288,36 @@ def automate_function(
         )
         return
 
-    logger.info("Found %d curves.", len(curve_objects))
+    layer_filter = function_inputs.layer_name.strip()
+    if layer_filter:
+        filtered_curves = [
+            obj
+            for obj, layers in curves_with_layers
+            if _match_layer_candidates(layers, layer_filter)
+        ]
+
+        if filtered_curves:
+            curve_objects = filtered_curves
+            logger.info(
+                "Found %d curves total; %d matched layer filter '%s'.",
+                len(curves_with_layers),
+                len(curve_objects),
+                layer_filter,
+            )
+        elif function_inputs.strict_layer_match:
+            automate_context.mark_run_failed(
+                f"No curves matched layer filter '{layer_filter}'. "
+                "Set Strict Layer Match to false to fallback to all curves."
+            )
+            return
+        else:
+            logger.warning(
+                "No curves matched layer filter '%s'. Falling back to all %d curves.",
+                layer_filter,
+                len(curve_objects),
+            )
+    else:
+        logger.info("Found %d curves.", len(curve_objects))
 
     # 3. Convert Speckle curves → Rhino JSON
     curve_jsons = []
@@ -305,4 +420,12 @@ def automate_function(
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print(
+            "Run with Speckle Automate runtime arguments.\n"
+            "Local checks: pytest\n"
+            "Automate shape: python -u main.py run <automationRunDataJson> <functionInputsJson> <token>"
+        )
+        raise SystemExit(0)
+
     execute_automate_function(automate_function, FunctionInputs)

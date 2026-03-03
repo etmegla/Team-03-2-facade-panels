@@ -38,35 +38,35 @@ def test_function_run(
 
 def test_speckle_polyline_conversion():
     """A Speckle Polyline should convert to a Rhino JSON dict."""
-    from main import _speckle_curve_to_rhino_json
+    from main import _speckle_to_rhino_json
     from specklepy.objects import Base
 
     obj = Base()
     obj.speckle_type = "Objects.Geometry.Polyline"
     obj["value"] = [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]
 
-    result = _speckle_curve_to_rhino_json(obj)
+    result = _speckle_to_rhino_json(obj)
     assert result is not None
     assert isinstance(result, dict)
 
 
 def test_unknown_type_returns_none():
     """Non-curve objects should return None without raising."""
-    from main import _speckle_curve_to_rhino_json
+    from main import _speckle_to_rhino_json
     from specklepy.objects import Base
 
     obj = Base()
     obj.speckle_type = "Objects.BuiltElements.Wall"
 
-    result = _speckle_curve_to_rhino_json(obj)
+    result = _speckle_to_rhino_json(obj)
     assert result is None
 
 
 def test_parse_empty_gh_output():
     """Empty GH result should return an empty list."""
-    from main import _parse_gh_output
+    from main import _parse_mesh_output
 
-    result = _parse_gh_output({"values": []}, "Panels")
+    result = _parse_mesh_output({"values": []}, "Mesh")
     assert result == []
 
 
@@ -79,7 +79,7 @@ def test_function_inputs_defaults():
         target_model_id="abc123",
     )
 
-    assert inputs.panel_type.value == "flat"
-    assert inputs.panel_depth == 0.2
-    assert inputs.gh_curve_input_name == "Curves"
-    assert inputs.gh_panel_output_name == "Panels"
+    assert inputs.gh_input_name == "Curves"
+    assert inputs.gh_output_name == "Mesh"
+    assert inputs.layer_name == ""
+    assert inputs.strict_layer_match is False
