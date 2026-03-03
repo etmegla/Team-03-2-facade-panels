@@ -64,16 +64,13 @@ class FunctionInputs(AutomateBase):
         description=(
             "Public URL to your .gh file. "
             "e.g. https://raw.githubusercontent.com/etmegla/"
-            "Team-03-2-facade-panels/main/Team03.2_Final_Assignment.gh"
+            "Team-03-2-facade-panels/main/assets/Team03.2_Final_Assignment.gh"
         ),
     )
     github_token: SecretStr | None = Field(
         default=None,
-        title="GitHub Token (optional)",
-        description=(
-            "Optional token for private GitHub repos. "
-            "If set, used to fetch the .gh file via authenticated requests."
-        ),
+        title="GitHub Token",
+        description="Personal access token for private GitHub repos. Leave empty for public repos.",
     )
     gh_input_name: str = Field(
         default="Curves",
@@ -124,33 +121,19 @@ def _get_children(obj: Base) -> list:
     return []
 
 
-def _extract_all_curves(obj: Base, collected: list) -> None:
-    """Recursively collect all curve objects from the version root."""
-    speckle_type = getattr(obj, "speckle_type", "")
-    if any(speckle_type.startswith(ct) for ct in CURVE_TYPES):
-        collected.append(obj)
-        return
-    for child in _get_children(obj):
-        if isinstance(child, Base):
-            _extract_all_curves(child, collected)
-
-
 def _extract_layer_candidates(obj: Base) -> set[str]:
     """Collect possible layer labels attached to an object or collection node."""
     candidates: set[str] = set()
-
     for attr in ("layer", "Layer", "name"):
         value = getattr(obj, attr, None)
         if isinstance(value, str) and value.strip():
             candidates.add(value.strip())
-
     props = getattr(obj, "properties", None)
     if props:
         for attr in ("layer", "Layer", "name"):
             value = getattr(props, attr, None)
             if isinstance(value, str) and value.strip():
                 candidates.add(value.strip())
-
     return candidates
 
 
@@ -158,28 +141,21 @@ def _match_layer_candidates(candidates: Iterable[str], layer_filter: str) -> boo
     """Return True when any candidate matches the requested layer (path-aware)."""
     if not layer_filter:
         return True
-
     normalized_filter = layer_filter.strip()
     filter_leaf = normalized_filter.split("::")[-1].strip()
-
     for candidate in candidates:
         normalized_candidate = candidate.strip()
         if not normalized_candidate:
             continue
-
         if normalized_candidate == normalized_filter:
             return True
-
         candidate_leaf = normalized_candidate.split("::")[-1].strip()
         if candidate_leaf == filter_leaf:
             return True
-
         if normalized_candidate.endswith(f"::{normalized_filter}"):
             return True
-
         if normalized_filter.endswith(f"::{normalized_candidate}"):
             return True
-
     return False
 
 
@@ -191,9 +167,7 @@ def _iter_base_with_inherited_layers(
     inherited = inherited_layers or set()
     current_layers = _extract_layer_candidates(root)
     effective_layers = inherited | current_layers
-
     yield root, effective_layers
-
     for child in _get_children(root):
         if isinstance(child, Base):
             yield from _iter_base_with_inherited_layers(child, effective_layers)
@@ -203,11 +177,9 @@ def _rhino_encode_to_dict(encoded: object) -> dict | None:
     """Normalize rhino3dm Encode() output to a Python dict."""
     if isinstance(encoded, dict):
         return encoded
-
     if isinstance(encoded, (str, bytes, bytearray)):
         parsed = json.loads(encoded)
         return parsed if isinstance(parsed, dict) else None
-
     return None
 
 
@@ -224,8 +196,7 @@ def _speckle_to_rhino_json(obj: Base) -> dict | None:
             pl = rhino3dm.Polyline()
             for i in range(0, len(pts), 3):
                 pl.Add(pts[i], pts[i + 1], pts[i + 2])
-            encoded = pl.ToPolylineCurve().Encode()
-            return _rhino_encode_to_dict(encoded)
+            return _rhino_encode_to_dict(pl.ToPolylineCurve().Encode())
 
     if "Curve" in st:
         degree = getattr(obj, "degree", 3)
@@ -248,25 +219,23 @@ def _speckle_to_rhino_json(obj: Base) -> dict | None:
 
     return None
 
+
 def _raw_url_to_github_contents_api(url: str) -> str | None:
     """Convert raw/blob GitHub file URL to GitHub Contents API URL."""
     parsed = urlparse(url)
     parts = [p for p in parsed.path.split("/") if p]
-
     if parsed.netloc == "raw.githubusercontent.com":
         if len(parts) < 4:
             return None
         owner, repo, ref = parts[0], parts[1], parts[2]
         file_path = "/".join(parts[3:])
     elif parsed.netloc == "github.com":
-        # /owner/repo/blob/<ref>/<path>
         if len(parts) < 5 or parts[2] != "blob":
             return None
         owner, repo, ref = parts[0], parts[1], parts[3]
         file_path = "/".join(parts[4:])
     else:
         return None
-
     return f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={ref}"
 
 
@@ -275,11 +244,9 @@ def _normalize_github_file_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.netloc != "github.com":
         return url
-
     parts = [p for p in parsed.path.split("/") if p]
     if len(parts) < 5 or parts[2] != "blob":
         return url
-
     owner, repo, ref = parts[0], parts[1], parts[3]
     file_path = "/".join(parts[4:])
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{file_path}"
@@ -300,8 +267,6 @@ def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> lis
     if response.ok:
         return list(response.content)
 
-    # For private GitHub repos, raw URL often returns 404 without auth context;
-    # try GitHub contents API when URL points to raw.githubusercontent.com.
     api_url = _raw_url_to_github_contents_api(normalized_url)
     if api_url and "Authorization" in headers:
         api_headers = {
@@ -399,7 +364,6 @@ def automate_function(
             for obj, layers in curves_with_layers
             if _match_layer_candidates(layers, layer_filter)
         ]
-
         if filtered_curves:
             curve_objects = filtered_curves
             logger.info(
