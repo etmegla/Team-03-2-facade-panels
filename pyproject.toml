@@ -2,14 +2,17 @@
 name = "speckle-automate-function"
 version = "0.1.0"
 requires-python = ">=3.11"
-authors = [{ name = "Speckle Systems", email = "hello@speckle.systems" }]
-maintainers = [{ name = "Speckle Systems", email = "hello@speckle.systems" }]
-description = "A Speckle Automate function template using specklepy"
+description = "Facade panel generator: curves → Rhino Compute → mesh panels"
 readme = "README.md"
 license = "Apache-2.0"
-keywords = ["speckle", "automate", "bim", "aec"]
+keywords = ["speckle", "automate", "rhino", "grasshopper", "facade", "aec"]
 
-dependencies = ["specklepy==3.1.0"]
+dependencies = [
+    "specklepy==3.1.0",
+    "rhino3dm>=8.0.0",
+    "compute-rhino3d>=0.13.0",
+    "requests>=2.31.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -22,13 +25,7 @@ dev = [
 exclude = [".venv", "**/*.yml"]
 
 [tool.ruff.lint]
-select = [
-    "E",  # pycodestyle
-    "F",  # pyflakes
-    "UP", # pyupgrade
-    "D",  # pydocstyle
-    "I",  # isort
-]
+select = ["E", "F", "UP", "D", "I"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
