@@ -212,17 +212,18 @@ def _speckle_to_rhino_json(obj: Base) -> dict | None:
         rational = weights is not None and len(weights) == len(points) // 3
 
         if points and knots:
-            nc = rhino3dm.NurbsCurve(3, rational, degree + 1, len(points) // 3)
-            for i in range(len(points) // 3):
+            point_count = len(points) // 3
+            nc = rhino3dm.NurbsCurve(3, rational, degree + 1, point_count)
+            for i in range(point_count):
                 x, y, z = points[3*i], points[3*i+1], points[3*i+2]
                 w = weights[i] if rational else 1.0
                 nc.Points[i] = rhino3dm.Point4d(x, y, z, w)
-            for i, k in enumerate(knots):
-                nc.Knots[i] = k
+            rhino_knot_count = point_count + degree - 1
+            for i in range(min(len(knots), rhino_knot_count)):
+                nc.Knots[i] = knots[i]
             return json.loads(nc.Encode())
 
     return None
-
 
 def _fetch_gh_definition(url: str) -> list[int]:
     """Download the .gh file and return it as a list of ints for compute SDK."""
