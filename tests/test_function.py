@@ -84,6 +84,21 @@ def test_rhino_encode_to_dict_normalizes_input_types():
     assert _rhino_encode_to_dict(b'{"a": 1}') == payload
 
 
+def test_normalize_github_blob_url() -> None:
+    """GitHub blob links should normalize to raw file links."""
+    from main import _normalize_github_file_url
+
+    url = (
+        "https://github.com/etmegla/Team-03-2-facade-panels/blob/"
+        "main/assets/Team03.2%20Final%20Assignment.gh"
+    )
+    expected = (
+        "https://raw.githubusercontent.com/etmegla/Team-03-2-facade-panels/"
+        "main/assets/Team03.2%20Final%20Assignment.gh"
+    )
+    assert _normalize_github_file_url(url) == expected
+
+
 def test_function_inputs_defaults():
     """FunctionInputs applies sensible defaults for optional fields."""
     inputs = FunctionInputs(

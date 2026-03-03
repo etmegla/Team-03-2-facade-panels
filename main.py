@@ -249,23 +249,46 @@ def _speckle_to_rhino_json(obj: Base) -> dict | None:
     return None
 
 def _raw_url_to_github_contents_api(url: str) -> str | None:
-    """Convert raw GitHub URL to GitHub Contents API URL."""
+    """Convert raw/blob GitHub file URL to GitHub Contents API URL."""
     parsed = urlparse(url)
-    if parsed.netloc != "raw.githubusercontent.com":
+    parts = [p for p in parsed.path.split("/") if p]
+
+    if parsed.netloc == "raw.githubusercontent.com":
+        if len(parts) < 4:
+            return None
+        owner, repo, ref = parts[0], parts[1], parts[2]
+        file_path = "/".join(parts[3:])
+    elif parsed.netloc == "github.com":
+        # /owner/repo/blob/<ref>/<path>
+        if len(parts) < 5 or parts[2] != "blob":
+            return None
+        owner, repo, ref = parts[0], parts[1], parts[3]
+        file_path = "/".join(parts[4:])
+    else:
         return None
+
+    return f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={ref}"
+
+
+def _normalize_github_file_url(url: str) -> str:
+    """Normalize GitHub blob URLs to raw URLs for direct file download."""
+    parsed = urlparse(url)
+    if parsed.netloc != "github.com":
+        return url
 
     parts = [p for p in parsed.path.split("/") if p]
-    if len(parts) < 4:
-        return None
+    if len(parts) < 5 or parts[2] != "blob":
+        return url
 
-    owner, repo, ref = parts[0], parts[1], parts[2]
-    file_path = "/".join(parts[3:])
-    return f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={ref}"
+    owner, repo, ref = parts[0], parts[1], parts[3]
+    file_path = "/".join(parts[4:])
+    return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{file_path}"
 
 
 def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> list[int]:
     """Download the .gh file and return it as a list of ints for compute SDK."""
-    logger.info("Fetching GH definition from %s", url)
+    normalized_url = _normalize_github_file_url(url)
+    logger.info("Fetching GH definition from %s", normalized_url)
 
     headers: dict[str, str] = {}
     if github_token is not None:
@@ -273,13 +296,13 @@ def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> lis
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
-    response = requests.get(url, timeout=60, headers=headers)
+    response = requests.get(normalized_url, timeout=60, headers=headers)
     if response.ok:
         return list(response.content)
 
     # For private GitHub repos, raw URL often returns 404 without auth context;
     # try GitHub contents API when URL points to raw.githubusercontent.com.
-    api_url = _raw_url_to_github_contents_api(url)
+    api_url = _raw_url_to_github_contents_api(normalized_url)
     if api_url and "Authorization" in headers:
         api_headers = {
             "Authorization": headers["Authorization"],
