@@ -314,9 +314,6 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,python,pycharm
 
-# don't accidentally commit binary GH definitions here
-
-*.gh          
 
 .env
 .venv/
