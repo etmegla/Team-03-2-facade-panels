@@ -8,7 +8,9 @@ resulting mesh panels to the facade panels model.
 import json
 import logging
 import sys
+from base64 import b64decode
 from collections.abc import Iterable
+from urllib.parse import urlparse
 
 import requests
 from pydantic import Field, SecretStr
@@ -63,6 +65,14 @@ class FunctionInputs(AutomateBase):
             "Public URL to your .gh file. "
             "e.g. https://raw.githubusercontent.com/etmegla/"
             "Team-03-2-facade-panels/main/Team03.2_Final_Assignment.gh"
+        ),
+    )
+    github_token: SecretStr | None = Field(
+        default=None,
+        title="GitHub Token (optional)",
+        description=(
+            "Optional token for private GitHub repos. "
+            "If set, used to fetch the .gh file via authenticated requests."
         ),
     )
     gh_input_name: str = Field(
@@ -238,12 +248,53 @@ def _speckle_to_rhino_json(obj: Base) -> dict | None:
 
     return None
 
-def _fetch_gh_definition(url: str) -> list[int]:
+def _raw_url_to_github_contents_api(url: str) -> str | None:
+    """Convert raw GitHub URL to GitHub Contents API URL."""
+    parsed = urlparse(url)
+    if parsed.netloc != "raw.githubusercontent.com":
+        return None
+
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) < 4:
+        return None
+
+    owner, repo, ref = parts[0], parts[1], parts[2]
+    file_path = "/".join(parts[3:])
+    return f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={ref}"
+
+
+def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> list[int]:
     """Download the .gh file and return it as a list of ints for compute SDK."""
     logger.info("Fetching GH definition from %s", url)
-    r = requests.get(url, timeout=60)
-    r.raise_for_status()
-    return list(r.content)
+
+    headers: dict[str, str] = {}
+    if github_token is not None:
+        token = github_token.get_secret_value().strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+    response = requests.get(url, timeout=60, headers=headers)
+    if response.ok:
+        return list(response.content)
+
+    # For private GitHub repos, raw URL often returns 404 without auth context;
+    # try GitHub contents API when URL points to raw.githubusercontent.com.
+    api_url = _raw_url_to_github_contents_api(url)
+    if api_url and "Authorization" in headers:
+        api_headers = {
+            "Authorization": headers["Authorization"],
+            "Accept": "application/vnd.github+json",
+        }
+        api_response = requests.get(api_url, timeout=60, headers=api_headers)
+        api_response.raise_for_status()
+        payload = api_response.json()
+        encoded = payload.get("content", "")
+        if not encoded:
+            raise RuntimeError("GitHub contents API response did not include file content")
+        return list(b64decode(encoded))
+
+    response.raise_for_status()
+    return []
 
 
 def _run_grasshopper(
@@ -378,7 +429,8 @@ def automate_function(
     # 4. Fetch GH definition
     try:
         gh_definition = _fetch_gh_definition(
-            function_inputs.grasshopper_definition_url
+            function_inputs.grasshopper_definition_url,
+            function_inputs.github_token,
         )
     except Exception as exc:
         automate_context.mark_run_exception(
