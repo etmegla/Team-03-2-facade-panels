@@ -221,9 +221,19 @@ def _speckle_to_rhino_json(obj: Base) -> dict | None:
         raise RuntimeError("rhino3dm is not installed in this environment")
 
     st = getattr(obj, "speckle_type", "")
+    if not st or st == "Base":
+        try:
+            st = obj["speckle_type"]
+        except Exception:
+            pass
 
-    if "Polyline" in st or "Line" in st:
+    if "Polyline" in st or "Line" in st or st == "Base":
         pts = getattr(obj, "value", None)
+        if pts is None:
+            try:
+                pts = obj["value"]
+            except Exception:
+                pts = None
         if pts and len(pts) >= 6:
             pl = rhino3dm.Polyline()
             for i in range(0, len(pts), 3):
@@ -235,6 +245,21 @@ def _speckle_to_rhino_json(obj: Base) -> dict | None:
         points = getattr(obj, "points", [])
         knots = getattr(obj, "knots", [])
         weights = getattr(obj, "weights", None)
+        if not points:
+            try:
+                points = obj["points"]
+            except Exception:
+                points = []
+        if not knots:
+            try:
+                knots = obj["knots"]
+            except Exception:
+                knots = []
+        if weights is None:
+            try:
+                weights = obj["weights"]
+            except Exception:
+                weights = None
         rational = weights is not None and len(weights) == len(points) // 3
 
         if points and knots:
@@ -387,7 +412,8 @@ def _run_grasshopper(
         )
 
     Util.url = inputs.compute_url
-    Util.apiKey = api_key
+    Util.authToken = api_key
+    Util.apiKey = ""
 
     curve_tree = Grasshopper.DataTree(inputs.gh_input_name)
     for i, cj in enumerate(curve_jsons):
@@ -479,6 +505,13 @@ def automate_function(
     else:
         logger.info("Found %d curves.", len(curve_objects))
 
+    if rhino3dm is None:
+        automate_context.mark_run_failed(
+            "rhino3dm is not installed in this environment. "
+            "Install project dependencies before running the function."
+        )
+        return
+
     # 3. Convert Speckle curves → Rhino JSON
     curve_jsons = []
     skipped = []
@@ -512,7 +545,7 @@ def automate_function(
             function_inputs.github_token,
         )
     except Exception as exc:
-        automate_context.mark_run_exception(
+        automate_context.mark_run_failed(
             f"Failed to download Grasshopper definition: {exc}"
         )
         return
@@ -522,7 +555,7 @@ def automate_function(
     try:
         gh_result = _run_grasshopper(gh_definition, curve_jsons, function_inputs)
     except Exception as exc:
-        automate_context.mark_run_exception(
+        automate_context.mark_run_failed(
             f"Rhino Compute call failed: {exc}"
         )
         return
