@@ -50,7 +50,7 @@ transport = ServerTransport(
 print("Receiving latest model")
 
 # get the main branch (include the most recent commit)
-branch = client.branches.get(RECEIVE_MODEL, "main", limit=1)
+branch = client.branches.get(RECEIVE_MODEL, "main")
 
 # newest commit
 commit = branch.commits.items[0]
