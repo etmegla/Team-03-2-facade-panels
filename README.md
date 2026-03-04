@@ -228,7 +228,7 @@ facade-panel-function/
 
 | Input | Description | Default |
 |---|---|---|
-| `compute_url` | Rhino Compute server URL | `https://compute8.iaac.net/` |
+| `compute_url` | Rhino Compute server URL | `http://localhost:8081/` |
 | `compute_api_key` | API key for Rhino Compute | *(required)* |
 | `grasshopper_definition_url` | Public URL to your `.gh` file | *(required)* |
 | `curve_speckle_type` | `speckle_type` filter for input curves | `Objects.Geometry.Curve` |

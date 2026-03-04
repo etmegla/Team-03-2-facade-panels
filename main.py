@@ -75,7 +75,9 @@ class FunctionInputs(AutomateBase):
     """Inputs for the facade panel generation function."""
 
     compute_url: str = Field(
-        default="https://compute8.iaac.net/",
+        # Remote default kept for reference:
+        # default="https://compute8.iaac.net/",
+        default="http://localhost:8081/",
         title="Rhino Compute URL",
         description="Base URL of your Rhino Compute server (include trailing slash).",
     )
@@ -412,8 +414,8 @@ def _run_grasshopper(
         )
 
     Util.url = inputs.compute_url
+    Util.apiKey = api_key
     Util.authToken = api_key
-    Util.apiKey = ""
 
     curve_tree = Grasshopper.DataTree(inputs.gh_input_name)
     for i, cj in enumerate(curve_jsons):
