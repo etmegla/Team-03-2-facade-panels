@@ -7,9 +7,11 @@ resulting mesh panels to the facade panels model.
 
 import json
 import logging
+import os
 import sys
 from base64 import b64decode
 from collections.abc import Iterable
+from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
 import requests
@@ -24,6 +26,28 @@ from specklepy.objects import Base
 from flatten import flatten_base
 
 logger = logging.getLogger(__name__)
+
+
+def _load_dotenv_file(path: Path) -> None:
+    """Load KEY=VALUE pairs from a .env file into process environment."""
+    if not path.exists() or not path.is_file():
+        return
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if not key:
+            continue
+
+        os.environ.setdefault(key, value)
+
+
+_load_dotenv_file(Path(__file__).resolve().with_name(".env"))
 
 try:
     import rhino3dm
@@ -55,9 +79,13 @@ class FunctionInputs(AutomateBase):
         title="Rhino Compute URL",
         description="Base URL of your Rhino Compute server (include trailing slash).",
     )
-    compute_api_key: SecretStr = Field(
+    compute_api_key: SecretStr | None = Field(
+        default=None,
         title="Rhino Compute API Key",
-        description="API key for the Rhino Compute server.",
+        description=(
+            "API key for the Rhino Compute server. "
+            "If empty, RHINO_COMPUTE_API_KEY from .env/environment will be used."
+        ),
     )
     grasshopper_definition_url: str = Field(
         title="Grasshopper Definition URL",
@@ -70,7 +98,11 @@ class FunctionInputs(AutomateBase):
     github_token: SecretStr | None = Field(
         default=None,
         title="GitHub Token",
-        description="Personal access token for private GitHub repos. Leave empty for public repos.",
+        description=(
+            "Personal access token for private GitHub repos. "
+            "If empty, GITHUB_TOKEN from .env/environment will be used. "
+            "Leave empty for public repos."
+        ),
     )
     gh_input_name: str = Field(
         default="Curves",
@@ -286,10 +318,13 @@ def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> lis
     logger.info("Fetching GH definition from %s", candidates[0])
 
     headers: dict[str, str] = {}
+    token = ""
     if github_token is not None:
         token = github_token.get_secret_value().strip()
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+    if not token:
+        token = os.getenv("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
     last_response = None
     for candidate in candidates:
@@ -338,8 +373,21 @@ def _run_grasshopper(
     if Grasshopper is None or Util is None:
         raise RuntimeError("compute-rhino3d is not installed in this environment")
 
+    api_key = (
+        inputs.compute_api_key.get_secret_value().strip()
+        if inputs.compute_api_key is not None
+        else ""
+    )
+    if not api_key:
+        api_key = os.getenv("RHINO_COMPUTE_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "Missing Rhino Compute API key. Provide compute_api_key input or "
+            "set RHINO_COMPUTE_API_KEY in .env/environment."
+        )
+
     Util.url = inputs.compute_url
-    Util.apiKey = inputs.compute_api_key.get_secret_value()
+    Util.apiKey = api_key
 
     curve_tree = Grasshopper.DataTree(inputs.gh_input_name)
     for i, cj in enumerate(curve_jsons):
