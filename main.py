@@ -443,8 +443,10 @@ def _run_grasshopper(
     if not api_key:
         api_key = os.getenv("RHINO_COMPUTE_API_KEY", "").strip()
     parsed_compute_url = urlparse(inputs.compute_url)
-    is_local_compute = parsed_compute_url.hostname in {"localhost", "127.0.0.1", "::1"}
-    if not api_key and not is_local_compute:
+    hostname = (parsed_compute_url.hostname or "").lower()
+    is_local_compute = hostname in {"localhost", "127.0.0.1", "::1"}
+    is_cloudflare_quick_tunnel = hostname.endswith(".trycloudflare.com")
+    if not api_key and not (is_local_compute or is_cloudflare_quick_tunnel):
         raise RuntimeError(
             "Missing Rhino Compute API key. Provide compute_api_key input or "
             "set RHINO_COMPUTE_API_KEY in .env/environment."
