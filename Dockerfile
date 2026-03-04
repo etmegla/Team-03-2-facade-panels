@@ -1,16 +1,18 @@
 # Speckle Automate — Facade Panel Generator
-# Runs on Speckle's Linux infrastructure (CPU-only, no GPU required).
 
 FROM python:3.11-slim
 
 WORKDIR /home/speckle
 
-# Install dependencies first (Docker layer cache)
-COPY pyproject.toml /home/speckle/
-
-RUN pip install --no-cache-dir .
-
-# Copy source
+# Copy project files
 COPY . /home/speckle
 
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    rhino3dm \
+    compute-rhino3d \
+    specklepy \
+    requests
+
+# Run automation
 CMD ["python", "-u", "main.py"]

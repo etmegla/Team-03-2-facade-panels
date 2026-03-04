@@ -1,404 +1,197 @@
-"""Facade panel generator.
+# ----------------------------------------------------
+# RECEIVE MODEL → EXTRACT SLAB CURVES → RUN GH → SEND PANELS
+# ----------------------------------------------------
 
-Triggered by the slab curves model. Fetches curves, sends them to
-Rhino Compute running the Grasshopper definition, and publishes the
-resulting mesh panels to the facade panels model.
-"""
-
-import json
-import logging
 import os
-import sys
-import tempfile
-from base64 import b64decode
-from collections.abc import Iterable
-from pathlib import Path
-from urllib.parse import quote, unquote, urlparse
+import rhino3dm
+import compute_rhino3d.Grasshopper as gh
+import compute_rhino3d.Util
 
-import requests
-from pydantic import Field, SecretStr
+from specklepy.api.client import SpeckleClient
+from specklepy.api.credentials import get_default_account
+from specklepy.transports.server import ServerTransport
+from specklepy.api import operations
+from specklepy.objects.base import Base
+from specklepy.objects.geometry import Polyline, Line, Curve, Mesh
 
-from speckle_automate import (
-    AutomateBase,
-    AutomationContext,
-    execute_automate_function,
+# ----------------------------------------------------
+# CONFIG
+# ----------------------------------------------------
+
+SPECKLE_HOST = "https://app.speckle.systems"
+
+RECEIVE_MODEL = "a15cb4bb48"
+SLAB_STREAM_ID = "46b9ec633c"
+FACADE_STREAM_ID = "628a79de4a"
+
+GH_FILE = r"C:\Users\etmaglari\IAAC\Team-03-2-facade-panels\test_minimal.gh"
+
+compute_rhino3d.Util.url = "http://localhost:5000/"
+
+# ----------------------------------------------------
+# CONNECT TO SPECKLE
+# ----------------------------------------------------
+print("Connecting to Speckle")
+
+client = SpeckleClient(host=SPECKLE_HOST)
+
+account = get_default_account()
+
+client.authenticate_with_account(account)
+
+transport = ServerTransport(
+    client=client,
+    stream_id=RECEIVE_MODEL
 )
-from specklepy.objects import Base
+# ----------------------------------------------------
+# RECEIVE MODEL
+# ----------------------------------------------------
 
-logger = logging.getLogger(__name__)
+print("Receiving latest model")
 
-try:
-    import rhino3dm
-except Exception:
-    rhino3dm = None
+# get the main branch (include the most recent commit)
+branch = client.branches.get(RECEIVE_MODEL, "main", limit=1)
 
-try:
-    from compute_rhino3d import Grasshopper, Util
-except Exception:
-    Grasshopper = None
-    Util = None
+# newest commit
+commit = branch.commits.items[0]
+
+# receive the model object
+model = operations.receive(commit.referencedObject, transport)
+
+# ----------------------------------------------------
+# EXTRACT CURVES
+# ----------------------------------------------------
+
+print("Extracting slab curves")
+
+slab_curves = []
 
 
-CURVE_TYPES = (
-    "Objects.Geometry.Curve",
-    "Objects.Geometry.Polyline",
-    "Objects.Geometry.Line",
-    "Objects.Geometry.Arc",
-    "Objects.Geometry.Circle",
-    "Objects.Geometry.Ellipse",
-    "Objects.Geometry.Polycurve",
+def find_curves(obj):
+
+    if isinstance(obj, (Polyline, Line, Curve)):
+        slab_curves.append(obj)
+
+    if hasattr(obj, "__dict__"):
+
+        for v in obj.__dict__.values():
+
+            if isinstance(v, list):
+                for i in v:
+                    find_curves(i)
+
+            else:
+                find_curves(v)
+
+
+find_curves(model)
+
+print("Curves found:", len(slab_curves))
+
+# ----------------------------------------------------
+# SEND CURVES TO SLAB MODEL
+# ----------------------------------------------------
+
+print("Sending slab curves to slab model")
+
+slab_transport = ServerTransport(client=client, stream_id=SLAB_STREAM_ID)
+
+curve_container = Base()
+curve_container["curves"] = slab_curves
+
+obj_id = operations.send(curve_container, [slab_transport])
+
+client.commits.create(
+    stream_id=SLAB_STREAM_ID,
+    object_id=obj_id,
+    branch_name="main",
+    message="Extracted slab curves",
 )
 
+# ----------------------------------------------------
+# CONVERT TO RHINO CURVES
+# ----------------------------------------------------
 
-class FunctionInputs(AutomateBase):
+print("Converting curves to Rhino")
 
-    compute_url: str = Field(
-        default="http://localhost:5000/",
-        title="Rhino Compute URL",
-    )
+rhino_curves = []
 
-    compute_api_key: SecretStr | None = Field(
-        default=None,
-        title="Rhino Compute API Key",
-    )
-
-    grasshopper_definition_url: str = Field(
-        title="Grasshopper Definition URL",
-    )
-
-    github_token: SecretStr | None = Field(
-        default=None,
-        title="GitHub Token",
-    )
-
-    gh_input_name: str = Field(
-        default="Curves",
-        title="GH Input Parameter Name",
-    )
-
-    gh_output_name: str = Field(
-        default="Mesh",
-        title="GH Output Parameter Name",
-    )
-
-    layer_name: str = Field(
-        default="",
-        title="Layer Filter",
-    )
-
-    strict_layer_match: bool = Field(
-        default=False,
-        title="Strict Layer Match",
-    )
-
-    target_model_id: str = Field(
-        title="Target Model ID",
-    )
-
-    version_message: str = Field(
-        default="Facade panels generated by Automate",
-        title="Version Message",
-    )
-
-
-def _get_children(obj: Base) -> list:
-
-    for attr in ("elements", "@elements", "objects", "@objects"):
-        children = getattr(obj, attr, None)
-        if children and isinstance(children, list):
-            return children
-    return []
-
-
-def _extract_layer_candidates(obj: Base) -> set[str]:
-
-    candidates: set[str] = set()
-
-    for attr in ("layer", "Layer", "name"):
-        value = getattr(obj, attr, None)
-        if isinstance(value, str):
-            candidates.add(value)
-
-    return candidates
-
-
-def _iter_base_with_inherited_layers(
-    root: Base,
-    inherited_layers: set[str] | None = None,
-) -> Iterable[tuple[Base, set[str]]]:
-
-    inherited = inherited_layers or set()
-    current_layers = _extract_layer_candidates(root)
-    effective_layers = inherited | current_layers
-
-    yield root, effective_layers
-
-    for child in _get_children(root):
-        if isinstance(child, Base):
-            yield from _iter_base_with_inherited_layers(child, effective_layers)
-
-
-def _speckle_to_rhino_json(obj: Base) -> dict | None:
-
-    if rhino3dm is None:
-        return None
-
-    st = getattr(obj, "speckle_type", "")
-
-    if "Polyline" in st or "Line" in st:
-
-        pts = getattr(obj, "value", None)
-
-        if pts and len(pts) >= 6:
-
-            pl = rhino3dm.Polyline()
-
-            for i in range(0, len(pts), 3):
-                pl.Add(pts[i], pts[i + 1], pts[i + 2])
-
-            return pl.ToPolylineCurve().Encode()
-
-    if "Curve" in st:
-
-        points = getattr(obj, "points", [])
-        knots = getattr(obj, "knots", [])
-        degree = getattr(obj, "degree", 3)
-
-        if points and knots:
-
-            point_count = len(points) // 3
-
-            nc = rhino3dm.NurbsCurve(3, False, degree + 1, point_count)
-
-            for i in range(point_count):
-                x, y, z = points[3 * i], points[3 * i + 1], points[3 * i + 2]
-                nc.Points[i] = rhino3dm.Point4d(x, y, z, 1)
-
-            for i in range(len(knots)):
-                nc.Knots[i] = knots[i]
-
-            return nc.Encode()
-
-    return None
-
-
-def _write_temp_gh_file(content: bytes) -> str:
-
-    with tempfile.NamedTemporaryFile(suffix=".gh", delete=False) as temp_file:
-        temp_file.write(content)
-        return temp_file.name
-
-
-def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> str:
-
-    parsed = urlparse(url)
-
-    if parsed.scheme in ("", "file"):
-
-        path = Path(url)
-
-        if path.exists():
-            return str(path)
-
-    headers = {}
-
-    if github_token:
-        headers["Authorization"] = f"Bearer {github_token.get_secret_value()}"
-
-    r = requests.get(url, timeout=60, headers=headers)
-
-    if r.ok:
-        return _write_temp_gh_file(r.content)
-
-    raise RuntimeError("Failed to download Grasshopper definition")
-
-
-def _run_grasshopper(
-    gh_definition: str,
-    curve_jsons: list[dict],
-    inputs: FunctionInputs,
-) -> dict:
-
-    if Grasshopper is None or Util is None:
-        raise RuntimeError("compute-rhino3d not installed")
-
-    api_key = ""
-
-    if inputs.compute_api_key:
-        api_key = inputs.compute_api_key.get_secret_value()
-
-    Util.url = inputs.compute_url
-    Util.apiKey = api_key
-    Util.authToken = api_key
-
-    tree = Grasshopper.DataTree(inputs.gh_input_name)
-
-    for i, cj in enumerate(curve_jsons):
-        tree.Append([i], [cj])   # correct format for GH compute
-
-    return Grasshopper.EvaluateDefinition(
-        gh_definition,
-        [tree],
-        timeout=300,
-    )
-
-
-def _parse_mesh_output(gh_result: dict, output_name: str) -> list[Base]:
-
-    panels: list[Base] = []
-
-    for entry in gh_result.get("values", []):
-
-        if entry.get("ParamName") != output_name:
-            continue
-
-        for _, items in entry.get("InnerTree", {}).items():
-
-            for item in items:
-
-                raw = item.get("data")
-
-                if not raw:
-                    continue
-
-                try:
-
-                    geo_dict = json.loads(raw) if isinstance(raw, str) else raw
-
-                    rh_obj = rhino3dm.CommonObject.Decode(geo_dict)
-
-                    if isinstance(rh_obj, rhino3dm.Mesh):
-
-                        vertices = []
-                        faces = []
-
-                        for v in rh_obj.Vertices:
-                            vertices.extend([v.X, v.Y, v.Z])
-
-                        for f in rh_obj.Faces:
-
-                            if f.IsTriangle:
-                                faces.extend([3, f.A, f.B, f.C])
-                            else:
-                                faces.extend([4, f.A, f.B, f.C, f.D])
-
-                        mesh = Base()
-                        mesh["speckle_type"] = "Objects.Geometry.Mesh"
-                        mesh["vertices"] = vertices
-                        mesh["faces"] = faces
-
-                        panels.append(mesh)
-
-                except Exception as e:
-                    logger.warning("Mesh conversion failed: %s", e)
-
-    return panels
-
-
-def automate_function(
-    automate_context: AutomationContext,
-    function_inputs: FunctionInputs,
-) -> None:
-
-    version_root = automate_context.receive_version()
-
-    curves = []
-
-    for obj, _layers in _iter_base_with_inherited_layers(version_root):
-
-        if any(getattr(obj, "speckle_type", "").startswith(ct) for ct in CURVE_TYPES):
-            curves.append(obj)
-
-    if not curves:
-
-        automate_context.mark_run_failed("No curves found in trigger model")
-        return
-
-    if rhino3dm is None:
-
-        automate_context.mark_run_failed("rhino3dm not installed")
-        return
-
-    curve_jsons = []
-
-    for obj in curves:
-
-        rj = _speckle_to_rhino_json(obj)
-
-        if rj:
-            curve_jsons.append(rj)
-
-    if not curve_jsons:
-
-        automate_context.mark_run_failed("Curve conversion failed")
-        return
+for c in slab_curves:
 
     try:
 
-        gh_definition = _fetch_gh_definition(
-            function_inputs.grasshopper_definition_url,
-            function_inputs.github_token,
-        )
+        if isinstance(c, Line):
 
-    except Exception as e:
+            start = rhino3dm.Point3d(c.start.x, c.start.y, c.start.z)
+            end = rhino3dm.Point3d(c.end.x, c.end.y, c.end.z)
 
-        automate_context.mark_run_failed(str(e))
-        return
+            rhino_curves.append(rhino3dm.LineCurve(start, end))
 
-    try:
+        elif isinstance(c, Polyline):
 
-        gh_result = _run_grasshopper(
-            gh_definition,
-            curve_jsons,
-            function_inputs,
-        )
+            pts = [rhino3dm.Point3d(p.x, p.y, p.z) for p in c.as_points()]
 
-    except Exception as e:
+            rhino_curves.append(rhino3dm.PolylineCurve(pts))
 
-        automate_context.mark_run_failed(f"Rhino Compute error: {e}")
-        return
+    except:
+        pass
 
-    if gh_result.get("errors"):
+print("Rhino curves:", len(rhino_curves))
 
-        automate_context.mark_run_failed(
-            f"Grasshopper error: {gh_result['errors']}"
-        )
-        return
+# ----------------------------------------------------
+# RUN GRASSHOPPER
+# ----------------------------------------------------
 
-    panels = _parse_mesh_output(
-        gh_result,
-        function_inputs.gh_output_name,
-    )
+print("Running Grasshopper")
 
-    if not panels:
+tree = gh.DataTree("curves")
+tree.Append([0], rhino_curves)
 
-        automate_context.mark_run_failed("Grasshopper returned no mesh")
-        return
+output = gh.EvaluateDefinition(GH_FILE, [tree])
 
-    root = Base()
+# ----------------------------------------------------
+# EXTRACT MESHES
+# ----------------------------------------------------
 
-    root["@elements"] = panels
-    root["panelCount"] = len(panels)
+print("Extracting meshes")
 
-    automate_context.create_new_version_in_project(
-        root_object=root,
-        model_id=function_inputs.target_model_id,
-        version_message=function_inputs.version_message,
-    )
+meshes = []
 
-    automate_context.mark_run_success(
-        f"Generated {len(panels)} facade panels"
-    )
+for value in output["values"]:
 
+    for branch in value["InnerTree"].values():
 
-if __name__ == "__main__":
+        for item in branch:
 
-    if len(sys.argv) < 2:
-        print(
-            "Run using Speckle Automate runtime.\n"
-            "Example:\n"
-            "python main.py run <automationRunDataJson> <functionInputsJson> <token>"
-        )
-        raise SystemExit(0)
+            data = item["data"]
 
-    execute_automate_function(automate_function, FunctionInputs)
+            mesh = Mesh()
+
+            mesh.vertices = data["vertices"]
+            mesh.faces = data["faces"]
+
+            meshes.append(mesh)
+
+print("Meshes generated:", len(meshes))
+
+# ----------------------------------------------------
+# SEND PANELS TO FACADE MODEL
+# ----------------------------------------------------
+
+print("Sending panels to facade model")
+
+facade_transport = ServerTransport(client=client, stream_id=FACADE_STREAM_ID)
+
+panel_container = Base()
+panel_container["panels"] = meshes
+
+obj_id = operations.send(panel_container, [facade_transport])
+
+client.commits.create(
+    stream_id=FACADE_STREAM_ID,
+    object_id=obj_id,
+    branch_name="main",
+    message="Generated facade panels",
+)
+
+print("Pipeline complete")
