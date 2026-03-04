@@ -228,7 +228,7 @@ facade-panel-function/
 
 | Input | Description | Default |
 |---|---|---|
-| `compute_url` | Rhino Compute server URL | `http://localhost:6500/` |
+| `compute_url` | Rhino Compute server URL | `http://localhost:5000/` |
 | `compute_api_key` | API key for Rhino Compute (optional for localhost) | *(optional)* |
 | `grasshopper_definition_url` | Public URL or local path to your `.gh` file | *(required)* |
 | `curve_speckle_type` | `speckle_type` filter for input curves | `Objects.Geometry.Curve` |
@@ -276,7 +276,7 @@ cp .env.example .env
 pytest
 
 # 6. One-command local run (minimal GH)
-python -u main.py run "{\"project_id\":\"project id\",\"speckle_server_url\":\"https://latest.speckle.systems\",\"automation_id\":\"automation id\",\"automation_run_id\":\"automation run id\",\"function_run_id\":\"function run id\",\"triggers\":[{\"payload\":{\"modelId\":\"model id\",\"versionId\":\"version id\"},\"triggerType\":\"versionCreation\"}]}" "{\"compute_url\":\"http://localhost:6500/\",\"compute_api_key\":\"\",\"grasshopper_definition_url\":\"assets/test_minimal.gh\",\"gh_input_name\":\"Curves\",\"gh_output_name\":\"Mesh\",\"target_model_id\":\"YOUR_TARGET_MODEL_ID\",\"layer_name\":\"\",\"version_message\":\"Local minimal GH run\"}" "YOUR_SPECKLE_TOKEN"
+python -u main.py run "{\"project_id\":\"project id\",\"speckle_server_url\":\"https://latest.speckle.systems\",\"automation_id\":\"automation id\",\"automation_run_id\":\"automation run id\",\"function_run_id\":\"function run id\",\"triggers\":[{\"payload\":{\"modelId\":\"model id\",\"versionId\":\"version id\"},\"triggerType\":\"versionCreation\"}]}" "{\"compute_url\":\"http://localhost:5000/\",\"compute_api_key\":\"\",\"grasshopper_definition_url\":\"assets/test_minimal.gh\",\"gh_input_name\":\"Curves\",\"gh_output_name\":\"Mesh\",\"target_model_id\":\"YOUR_TARGET_MODEL_ID\",\"layer_name\":\"\",\"version_message\":\"Local minimal GH run\"}" "YOUR_SPECKLE_TOKEN"
 ```
 
 ---

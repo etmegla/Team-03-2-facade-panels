@@ -53,7 +53,7 @@ CURVE_TYPES = (
 class FunctionInputs(AutomateBase):
 
     compute_url: str = Field(
-        default="http://localhost:6500/",
+        default="http://localhost:5000/",
         title="Rhino Compute URL",
     )
 

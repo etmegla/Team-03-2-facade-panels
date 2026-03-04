@@ -26,7 +26,7 @@ def test_function_run(
         automate_function,
         FunctionInputs(
             # compute_url="https://compute8.iaac.net/",
-            compute_url="http://localhost:6500/",
+            compute_url="http://localhost:5000/",
             compute_api_key="test-api-key",
             grasshopper_definition_url="https://example.com/facade.gh",
             target_model_id="test-model-id",
@@ -137,7 +137,7 @@ def test_function_inputs_defaults():
     """FunctionInputs applies sensible defaults for optional fields."""
     inputs = FunctionInputs(
         # compute_url="https://compute8.iaac.net/",
-        compute_url="http://localhost:6500/",
+        compute_url="http://localhost:5000/",
         compute_api_key="key",
         grasshopper_definition_url="https://example.com/file.gh",
         target_model_id="abc123",
@@ -145,4 +145,4 @@ def test_function_inputs_defaults():
 
     assert inputs.gh_input_name == "Curves"
     assert inputs.gh_output_name == "Mesh"
-    assert inputs.compute_url == "http://localhost:6500/"
+    assert inputs.compute_url == "http://localhost:5000/"

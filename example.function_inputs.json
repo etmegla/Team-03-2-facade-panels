@@ -1,7 +1,7 @@
 {
   "speckleToken": "YOUR SPEKCLE TOKEN",
   "functionInputs": {
-    "compute_url": "http://localhost:6500/",
+    "compute_url": "http://localhost:5000/",
     "compute_api_key": "",
     "grasshopper_definition_url": "assets/test_minimal.gh",
     "gh_input_name": "Curves",
