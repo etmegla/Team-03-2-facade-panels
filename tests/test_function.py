@@ -120,6 +120,19 @@ def test_gh_url_variants_include_underscore_space_alternatives() -> None:
     ) in variants
 
 
+def test_fetch_gh_definition_from_local_file() -> None:
+    """Local GH file paths should be loadable for local development."""
+    from pathlib import Path
+
+    from main import _fetch_gh_definition
+
+    gh_path = Path(__file__).resolve().parents[1] / "assets" / "test_minimal.gh"
+    resolved = _fetch_gh_definition(str(gh_path))
+
+    assert isinstance(resolved, str)
+    assert Path(resolved).exists()
+
+
 def test_function_inputs_defaults():
     """FunctionInputs applies sensible defaults for optional fields."""
     inputs = FunctionInputs(

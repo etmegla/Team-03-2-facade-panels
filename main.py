@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 from base64 import b64decode
 from collections.abc import Iterable
 from pathlib import Path
@@ -77,7 +78,7 @@ class FunctionInputs(AutomateBase):
     compute_url: str = Field(
         # Remote default kept for reference:
         # default="https://compute8.iaac.net/",
-        default="http://localhost:8081/",
+        default="http://localhost:6500/",
         title="Rhino Compute URL",
         description="Base URL of your Rhino Compute server (include trailing slash).",
     )
@@ -86,13 +87,15 @@ class FunctionInputs(AutomateBase):
         title="Rhino Compute API Key",
         description=(
             "API key for the Rhino Compute server. "
-            "If empty, RHINO_COMPUTE_API_KEY from .env/environment will be used."
+            "If empty, RHINO_COMPUTE_API_KEY from .env/environment will be used. "
+            "For localhost compute this can be left empty."
         ),
     )
     grasshopper_definition_url: str = Field(
         title="Grasshopper Definition URL",
         description=(
-            "Public URL to your .gh file. "
+            "Public URL to your .gh file, or a local path for local development "
+            "(e.g. assets/test_minimal.gh). "
             "e.g. https://raw.githubusercontent.com/etmegla/"
             "Team-03-2-facade-panels/main/assets/Team03.2_Final_Assignment.gh"
         ),
@@ -339,8 +342,38 @@ def _gh_url_variants(url: str) -> list[str]:
     return variants
 
 
-def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> list[int]:
-    """Download the .gh file and return it as a list of ints for compute SDK."""
+def _write_temp_gh_file(content: bytes) -> str:
+    """Persist GH bytes to a temporary file and return its path."""
+    with tempfile.NamedTemporaryFile(suffix=".gh", delete=False) as temp_file:
+        temp_file.write(content)
+        return temp_file.name
+
+
+def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> str:
+    """Resolve the GH definition to a path/URL string accepted by compute SDK."""
+    parsed = urlparse(url)
+    is_windows_drive_path = (
+        os.name == "nt"
+        and len(url) >= 3
+        and url[1] == ":"
+        and url[0].isalpha()
+        and url[2] in ("\\", "/")
+    )
+    if parsed.scheme in ("", "file") or is_windows_drive_path:
+        local_path_raw = url
+        if parsed.scheme == "file":
+            if parsed.netloc and parsed.netloc not in ("", "localhost"):
+                local_path_raw = f"//{parsed.netloc}{unquote(parsed.path)}"
+            else:
+                local_path_raw = unquote(parsed.path)
+                if os.name == "nt" and local_path_raw.startswith("/") and len(local_path_raw) > 2 and local_path_raw[2] == ":":
+                    local_path_raw = local_path_raw[1:]
+
+        local_path = Path(local_path_raw).expanduser()
+        if local_path.exists() and local_path.is_file():
+            logger.info("Loading GH definition from local file %s", local_path)
+            return str(local_path)
+
     candidates = _gh_url_variants(url)
     logger.info("Fetching GH definition from %s", candidates[0])
 
@@ -357,7 +390,9 @@ def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> lis
     for candidate in candidates:
         response = requests.get(candidate, timeout=60, headers=headers)
         if response.ok:
-            return list(response.content)
+            if "Authorization" in headers:
+                return _write_temp_gh_file(response.content)
+            return candidate
         if response.status_code != 404:
             response.raise_for_status()
         last_response = response
@@ -379,7 +414,7 @@ def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> lis
                     raise RuntimeError(
                         "GitHub contents API response did not include file content"
                     )
-                return list(b64decode(encoded))
+                return _write_temp_gh_file(b64decode(encoded))
             if api_response.status_code != 404:
                 api_response.raise_for_status()
             last_response = api_response
@@ -392,7 +427,7 @@ def _fetch_gh_definition(url: str, github_token: SecretStr | None = None) -> lis
 
 
 def _run_grasshopper(
-    gh_definition: list[int],
+    gh_definition: str,
     curve_jsons: list[dict],
     inputs: FunctionInputs,
 ) -> dict:
@@ -407,7 +442,9 @@ def _run_grasshopper(
     )
     if not api_key:
         api_key = os.getenv("RHINO_COMPUTE_API_KEY", "").strip()
-    if not api_key:
+    parsed_compute_url = urlparse(inputs.compute_url)
+    is_local_compute = parsed_compute_url.hostname in {"localhost", "127.0.0.1", "::1"}
+    if not api_key and not is_local_compute:
         raise RuntimeError(
             "Missing Rhino Compute API key. Provide compute_api_key input or "
             "set RHINO_COMPUTE_API_KEY in .env/environment."
@@ -419,7 +456,7 @@ def _run_grasshopper(
 
     curve_tree = Grasshopper.DataTree(inputs.gh_input_name)
     for i, cj in enumerate(curve_jsons):
-        curve_tree.append([i], [json.dumps(cj)])
+        curve_tree.Append([i], [json.dumps(cj)])
 
     return Grasshopper.EvaluateDefinition(gh_definition, [curve_tree])
 

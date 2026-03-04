@@ -1,9 +1,14 @@
 {
   "speckleToken": "YOUR SPEKCLE TOKEN",
   "functionInputs": {
+    "compute_url": "http://localhost:6500/",
+    "compute_api_key": "",
+    "grasshopper_definition_url": "assets/test_minimal.gh",
+    "gh_input_name": "Curves",
+    "gh_output_name": "Mesh",
     "target_model_id": "YOUR_TARGET_MODEL_ID",
     "layer_name": "3D-Model::Structure::Floor Plate Curve",
-    "version_message": "Extracted floor plate curves"
+    "version_message": "Extracted floor plate curves (local minimal GH)"
   },
   "automationRunData": {
     "project_id": "project id",

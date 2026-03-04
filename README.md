@@ -228,9 +228,9 @@ facade-panel-function/
 
 | Input | Description | Default |
 |---|---|---|
-| `compute_url` | Rhino Compute server URL | `http://localhost:8081/` |
-| `compute_api_key` | API key for Rhino Compute | *(required)* |
-| `grasshopper_definition_url` | Public URL to your `.gh` file | *(required)* |
+| `compute_url` | Rhino Compute server URL | `http://localhost:6500/` |
+| `compute_api_key` | API key for Rhino Compute (optional for localhost) | *(optional)* |
+| `grasshopper_definition_url` | Public URL or local path to your `.gh` file | *(required)* |
 | `curve_speckle_type` | `speckle_type` filter for input curves | `Objects.Geometry.Curve` |
 | `gh_curve_input_name` | Grasshopper input parameter name | `Curves` |
 | `gh_panel_output_name` | Grasshopper output parameter name | `Panels` |
@@ -250,7 +250,7 @@ Your `.gh` file must expose:
 - **Input**: a parameter named `PanelDepth` — number (metres).
 - **Output**: a parameter named `Panels` (configurable) — returns Brep or Mesh geometry.
 
-The `.gh` file must be accessible via a public URL at runtime (e.g. a raw GitHub URL).
+The `.gh` file can be provided as a public URL (e.g. raw GitHub URL) or as a local path (e.g. `assets/test_minimal.gh`) for local development.
 
 ---
 
@@ -274,6 +274,9 @@ cp .env.example .env
 
 # 5. Run tests
 pytest
+
+# 6. One-command local run (minimal GH)
+python -u main.py run "{\"project_id\":\"project id\",\"speckle_server_url\":\"https://latest.speckle.systems\",\"automation_id\":\"automation id\",\"automation_run_id\":\"automation run id\",\"function_run_id\":\"function run id\",\"triggers\":[{\"payload\":{\"modelId\":\"model id\",\"versionId\":\"version id\"},\"triggerType\":\"versionCreation\"}]}" "{\"compute_url\":\"http://localhost:6500/\",\"compute_api_key\":\"\",\"grasshopper_definition_url\":\"assets/test_minimal.gh\",\"gh_input_name\":\"Curves\",\"gh_output_name\":\"Mesh\",\"target_model_id\":\"YOUR_TARGET_MODEL_ID\",\"layer_name\":\"\",\"version_message\":\"Local minimal GH run\"}" "YOUR_SPECKLE_TOKEN"
 ```
 
 ---
