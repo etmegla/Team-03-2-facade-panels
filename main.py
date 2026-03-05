@@ -8,7 +8,6 @@ import compute_rhino3d.Grasshopper as gh
 import compute_rhino3d.Util
 import requests
 import rhino3dm
-from dotenv import load_dotenv
 from pydantic import Field, SecretStr
 from speckle_automate import (
     AutomateBase,
@@ -24,26 +23,6 @@ from specklepy.objects.geometry import Curve, Line, Mesh, Polyline
 from specklepy.transports.server import ServerTransport
 
 from flatten import flatten_base
-
-# ----------------------------------------------------
-# Load environment variables from .env
-# ----------------------------------------------------
-load_dotenv()
-
-def _sanitize_env(value: str) -> str:
-    """Trim spaces and stray quotes from environment values."""
-    return value.strip().strip("\"").strip("'")
-
-
-COMPUTE_URL = _sanitize_env(os.getenv("COMPUTE_URL", "")).rstrip("/")
-COMPUTE_API_KEY = _sanitize_env(os.getenv("COMPUTE_API_KEY", ""))
-SPECKLE_TOKEN = _sanitize_env(os.getenv("SPECKLE_TOKEN", ""))
-SPECKLE_SERVER = _sanitize_env(
-    os.getenv("SPECKLE_SERVER_URL", "https://app.speckle.systems")
-)
-
-compute_rhino3d.Util.url    = COMPUTE_URL + "/"
-compute_rhino3d.Util.apiKey = COMPUTE_API_KEY
 
 
 # ----------------------------------------------------
@@ -74,6 +53,18 @@ class FunctionInputs(AutomateBase):
 # Helpers
 # ----------------------------------------------------
 
+def _get_config():
+    """Load config from environment — called at runtime, not at import."""
+    from dotenv import load_dotenv
+    load_dotenv()
+    return {
+        "compute_url":     os.getenv("COMPUTE_URL", "https://compute8.iaac.net").rstrip("/"),
+        "compute_api_key": os.getenv("COMPUTE_API_KEY", "macad2026"),
+        "speckle_token":   os.getenv("SPECKLE_TOKEN", ""),
+        "speckle_server":  os.getenv("SPECKLE_SERVER_URL", "https://app.speckle.systems"),
+    }
+
+
 def get_or_create_model(client, project_id: str, model_name: str):
     """Return existing model by name, or create it if it doesn't exist."""
     models = client.model.get_models(project_id=project_id)
@@ -103,10 +94,10 @@ def send_to_model(client, project_id: str, model_name: str, obj: Base, message: 
     return obj_id
 
 
-def resolve_latest_version(project_id: str, model_id: str) -> str:
+def resolve_latest_version(config: dict, project_id: str, model_id: str) -> str:
     """Fetch the latest version ID for a model — used for local testing only."""
-    client = SpeckleClient(host=SPECKLE_SERVER)
-    client.authenticate_with_token(SPECKLE_TOKEN)
+    client = SpeckleClient(host=config["speckle_server"])
+    client.authenticate_with_token(config["speckle_token"])
     versions = client.version.get_versions(
         model_id=model_id,
         project_id=project_id,
@@ -127,21 +118,22 @@ def automate_function(
 ) -> None:
     """Full pipeline: receive → extract curves → GH → send panels."""
 
+    config = _get_config()
+    compute_url     = config["compute_url"]
+    compute_api_key = config["compute_api_key"]
+
+    compute_rhino3d.Util.url    = compute_url + "/"
+    compute_rhino3d.Util.apiKey = compute_api_key
+
     client     = automate_context.speckle_client
     project_id = automate_context.automation_run_data.project_id
 
-    if not COMPUTE_URL:
-        automate_context.mark_run_failed(
-            "COMPUTE_URL is empty. Set it in your environment/.env file."
-        )
-        return
-
     # STEP 1: Verify Rhino Compute is reachable
-    print(f"Checking Rhino Compute at {COMPUTE_URL}...")
+    print(f"Checking Rhino Compute at {compute_url}...")
     try:
         r = requests.get(
-            f"{COMPUTE_URL}/version",
-            headers={"RhinoComputeKey": COMPUTE_API_KEY},
+            f"{compute_url}/version",
+            headers={"RhinoComputeKey": compute_api_key},
             timeout=10,
         )
         r.raise_for_status()
@@ -227,7 +219,7 @@ def automate_function(
     print("Decoding Grasshopper output...")
     speckle_meshes = []
     for value in output.get("values", []):
-        for branch_key, branch_items in value.get("InnerTree", {}).items():
+        for branch_key, branch_items in value["InnerTree"].items():
             for item in branch_items:
                 try:
                     decoded = rhino3dm.CommonObject.Decode(json.loads(item["data"]))
@@ -277,50 +269,47 @@ def automate_function_without_inputs(automate_context: AutomationContext) -> Non
 
 
 # ----------------------------------------------------
-# Local runner — the runner expects exactly:
-#   sys.argv = ['main.py', 'run', '<path_to_inputs.json>']
-# We build that here, patching token + resolving latest version
+# Entry point
+# On Speckle Automate servers: called as
+#   python main.py run <inputs_file>
+#   python main.py generate_schema <schema_file>
+#
+# Locally: called as
+#   python main.py example.function_inputs.json
 # ----------------------------------------------------
 if __name__ == "__main__":
-    # Accept either:
-    #   python main.py example.function_inputs.json   (our shorthand)
-    #   python main.py run example.function_inputs.json  (explicit)
     args = sys.argv[1:]
 
-    if args and args[0] == "generate_schema":
+    # Production / CI: pass straight through (run or generate_schema)
+    if len(args) == 2 and args[0] in ("run", "generate_schema"):
         execute_automate_function(automate_function, FunctionInputs)
-        sys.exit(0)
 
-    if len(args) == 1 and args[0] != "run":
+    # Local shorthand: python main.py example.function_inputs.json
+    elif len(args) == 1 and args[0].endswith(".json"):
+        config = _get_config()
         inputs_path = args[0]
-    elif len(args) == 2 and args[0] == "run":
-        inputs_path = args[1]
+
+        with open(inputs_path, "r") as f:
+            raw = json.load(f)
+
+        if config["speckle_token"]:
+            raw["speckleToken"] = config["speckle_token"]
+
+        project_id = raw["automationRunData"]["project_id"]
+        for trigger in raw["automationRunData"].get("triggers", []):
+            payload    = trigger.get("payload", {})
+            model_id   = payload.get("modelId", "")
+            version_id = payload.get("versionId", "")
+            if version_id == "latest" and model_id and model_id != "YOUR_MODEL_ID":
+                print(f"Resolving latest version for model {model_id}...")
+                payload["versionId"] = resolve_latest_version(config, project_id, model_id)
+
+        patched_path = inputs_path + ".patched.json"
+        with open(patched_path, "w") as f:
+            json.dump(raw, f)
+
+        sys.argv = [sys.argv[0], "run", patched_path]
+        execute_automate_function(automate_function, FunctionInputs)
+
     else:
-        print("Usage: python main.py example.function_inputs.json")
-        sys.exit(1)
-
-    with open(inputs_path, "r") as f:
-        raw = json.load(f)
-
-    # Patch token from .env
-    if SPECKLE_TOKEN:
-        raw["speckleToken"] = SPECKLE_TOKEN
-
-    # Resolve "latest" versionId automatically
-    project_id = raw["automationRunData"]["project_id"]
-    for trigger in raw["automationRunData"].get("triggers", []):
-        payload = trigger.get("payload", {})
-        model_id   = payload.get("modelId", "")
-        version_id = payload.get("versionId", "")
-        if version_id == "latest" and model_id and model_id != "YOUR_MODEL_ID":
-            print(f"Resolving latest version for model {model_id}...")
-            payload["versionId"] = resolve_latest_version(project_id, model_id)
-
-    # Write patched file and set argv so the runner sees: ['run', '<patched_path>']
-    patched_path = inputs_path + ".patched.json"
-    with open(patched_path, "w") as f:
-        json.dump(raw, f)
-
-    sys.argv = [sys.argv[0], "run", patched_path]
-
-    execute_automate_function(automate_function, FunctionInputs)
+        execute_automate_function(automate_function, FunctionInputs)
