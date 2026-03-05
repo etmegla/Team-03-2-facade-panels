@@ -1,24 +1,20 @@
 {
-  "speckleToken": "YOUR SPEKCLE TOKEN",
+  "speckleToken": "READ_FROM_ENV",
   "functionInputs": {
-    "compute_url": "http://localhost:5000/",
-    "compute_api_key": "",
-    "grasshopper_definition_url": "assets/test_minimal.gh",
-    "gh_input_name": "Curves",
-    "gh_output_name": "Mesh",
-    "target_model_id": "YOUR_TARGET_MODEL_ID",
-    "layer_name": "3D-Model::Structure::Floor Plate Curve",
-    "version_message": "Extracted floor plate curves (local minimal GH)"
+    "gh_file_path": "assets/test_minimal.gh",
+    "slab_model_name": "slab/curves",
+    "facade_model_name": "facade/panels",
+    "whisper_message": "test"
   },
   "automationRunData": {
-    "project_id": "project id",
-    "speckle_server_url": "https://latest.speckle.systems",
-    "automation_id": "automation id",
-    "automation_run_id": "automation run id",
-    "function_run_id": "function run id",
+    "project_id": "5a95953cb8",
+    "speckle_server_url": "https://app.speckle.systems",
+    "automation_id": "2668e92050",
+    "automation_run_id": "test-run-001",
+    "function_run_id": "test-function-001",
     "triggers": [
       {
-        "payload": { "modelId": "model id", "versionId": "version id" },
+        "payload": { "modelId": "46b9ec633c", "versionId": "latest" },
         "triggerType": "versionCreation"
       }
     ]
