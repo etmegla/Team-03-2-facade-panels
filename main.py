@@ -59,7 +59,7 @@ def _get_config():
     load_dotenv()
     return {
         "compute_url":     os.getenv("COMPUTE_URL", "https://compute8.iaac.net").rstrip("/"),
-        "compute_api_key": os.getenv("COMPUTE_API_KEY", "macad2026"),
+        "compute_api_key": os.getenv("COMPUTE_API_KEY", ""),
         "speckle_token":   os.getenv("SPECKLE_TOKEN", ""),
         "speckle_server":  os.getenv("SPECKLE_SERVER_URL", "https://app.speckle.systems"),
     }
@@ -121,6 +121,12 @@ def automate_function(
     config = _get_config()
     compute_url     = config["compute_url"]
     compute_api_key = config["compute_api_key"]
+
+    if not compute_api_key:
+        automate_context.mark_run_failed(
+            "COMPUTE_API_KEY is missing. Set it in your .env or environment variables."
+        )
+        return
 
     compute_rhino3d.Util.url    = compute_url + "/"
     compute_rhino3d.Util.apiKey = compute_api_key
