@@ -126,11 +126,18 @@ def automate_function(
     config = _get_config()
     compute_url     = config["compute_url"]
     compute_api_key = config["compute_api_key"]
+    key_source = "environment"
+
+    if not compute_api_key:
+        key_source = "missing"
 
     if function_inputs.compute_api_key is not None:
         input_key = function_inputs.compute_api_key.get_secret_value().strip()
         if input_key:
             compute_api_key = input_key
+            key_source = "function input"
+
+    print(f"Compute API key source: {key_source}")
 
     if not compute_api_key:
         automate_context.mark_run_failed(
