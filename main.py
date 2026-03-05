@@ -146,14 +146,43 @@ def automate_function(
     print("Receiving model version from Speckle...")
     version_root_object = automate_context.receive_version()
 
-    # STEP 3: Extract curves
+    # STEP 3: Extract curves from "Floor Plate Curve" layer only
     print("Extracting curves from received model...")
-    slab_curves = [
+
+    TARGET_LAYER = "Floor Plate Curve"
+
+    def _layer_name(obj) -> str:
+        """Return the layer name for a Speckle object (handles v2 and v3 schemas)."""
+        # specklepy v3: objects may carry a 'layer' string attribute
+        layer = getattr(obj, "layer", None)
+        if isinstance(layer, str):
+            return layer
+        # Some connectors store it as 'renderMaterial' or nested; also try 'applicationId' path
+        # Fallback: walk parent chain via __parents if available
+        return ""
+
+    all_curves = [
         obj
         for obj in flatten_base(version_root_object)
         if isinstance(obj, (Line, Polyline, Curve))
     ]
-    print(f"  Curves found: {len(slab_curves)}")
+    print(f"  Total curves in model: {len(all_curves)}")
+
+    # Filter to Floor Plate Curve layer — match full name or ends-with
+    slab_curves = [
+        obj for obj in all_curves
+        if TARGET_LAYER.lower() in _layer_name(obj).lower()
+    ]
+
+    # If layer filtering returned nothing, log all unique layer names found to help debug
+    if not slab_curves:
+        unique_layers = sorted({_layer_name(obj) for obj in all_curves})
+        print(f"  WARNING: No curves matched layer '{TARGET_LAYER}'.")
+        print(f"  Layer names found on curve objects: {unique_layers}")
+        print("  Falling back to ALL curves.")
+        slab_curves = all_curves
+
+    print(f"  Floor Plate curves selected: {len(slab_curves)}")
 
     if not slab_curves:
         automate_context.mark_run_failed(
@@ -184,10 +213,12 @@ def automate_function(
                 end   = rhino3dm.Point3d(c.end.x,   c.end.y,   c.end.z)
                 rhino_curve = rhino3dm.LineCurve(start, end)
             elif isinstance(c, Polyline):
-                pts = [rhino3dm.Point3d(p.x, p.y, p.z) for p in c.as_points()]
+                vals = c.value
+                pts = [rhino3dm.Point3d(vals[i], vals[i+1], vals[i+2]) for i in range(0, len(vals), 3)]
                 rhino_curve = rhino3dm.PolylineCurve(pts)
             else:
-                pts = [rhino3dm.Point3d(p.x, p.y, p.z) for p in c.points]
+                vals = c.points
+                pts = [rhino3dm.Point3d(vals[i], vals[i+1], vals[i+2]) for i in range(0, len(vals), 3)]
                 rhino_curve = rhino3dm.PolylineCurve(pts)
             encoded_curves.append(json.dumps(rhino_curve.ToNurbsCurve().Encode()))
         except Exception as e:
