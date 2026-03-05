@@ -244,55 +244,60 @@ def automate_function(
 
     # STEP 5: Encode curves for Rhino Compute
     print("Encoding curves for Rhino Compute...")
-    encoded_curves = []
+
+    rhino_curves = []
+
     for c in slab_curves:
         try:
             if isinstance(c, Line):
                 start = rhino3dm.Point3d(c.start.x, c.start.y, c.start.z)
                 end   = rhino3dm.Point3d(c.end.x,   c.end.y,   c.end.z)
                 rhino_curve = rhino3dm.LineCurve(start, end)
+
             elif isinstance(c, Polyline):
                 vals = c.value
-                pts = [rhino3dm.Point3d(vals[i], vals[i+1], vals[i+2]) for i in range(0, len(vals), 3)]
+                pts = [rhino3dm.Point3d(vals[i], vals[i+1], vals[i+2])
+                    for i in range(0, len(vals), 3)]
                 rhino_curve = rhino3dm.PolylineCurve(pts)
+
             else:
                 vals = c.points
-                pts = [rhino3dm.Point3d(vals[i], vals[i+1], vals[i+2]) for i in range(0, len(vals), 3)]
+                pts = [rhino3dm.Point3d(vals[i], vals[i+1], vals[i+2])
+                    for i in range(0, len(vals), 3)]
                 rhino_curve = rhino3dm.PolylineCurve(pts)
-            encoded_curves.append(json.dumps(rhino_curve.ToNurbsCurve().Encode()))
+
+            rhino_curves.append(rhino_curve)
+
         except Exception as e:
             print(f"  Skipped curve ({type(c).__name__}): {e}")
 
-    print(f"  Encoded: {len(encoded_curves)} curves")
-    if not encoded_curves:
+    print(f"  Rhino curves: {len(rhino_curves)}")
+    if not rhino_curves:
         automate_context.mark_run_failed(
             "Could not encode any curves for Rhino Compute."
         )
         return
 
+    encoded_curves = [
+        json.dumps(rhino_curve.ToNurbsCurve().Encode())
+        for rhino_curve in rhino_curves
+    ]
+    print(f"  Encoded: {len(encoded_curves)} curves")
+
     # STEP 6: Run Grasshopper
     gh_path = function_inputs.gh_file_path
-
     print(f"Running Grasshopper: {gh_path}")
-    print("GH path:", gh_path)
-    print("File exists:", os.path.isfile(gh_path))
 
     try:
-        # If it's a URL, EvaluateDefinition uses it as a pointer
-        # If it's a local path, the file must exist inside the automation container
         if not gh_path.startswith("http"):
             if not os.path.isfile(gh_path):
                 automate_context.mark_run_failed(
-                    f"Grasshopper file not found: '{gh_path}'. "
-                    "Either commit the .gh file to the repo at that path, "
-                    "or provide a full URL pointing to the file."
+                    f"Grasshopper file not found: '{gh_path}'."
                 )
                 return
 
-        # Send curves to Grasshopper
         curve_tree = gh.DataTree("curves")
         curve_tree.Append([0], encoded_curves)
-
         output = gh.EvaluateDefinition(gh_path, [curve_tree])
 
         if output is None:
@@ -300,16 +305,9 @@ def automate_function(
                 "Rhino Compute returned an empty response."
             )
             return
-
     except Exception as e:
         automate_context.mark_run_failed(f"Grasshopper evaluation failed: {e}")
         return
-
-    if output.get("errors"):
-        print("GH errors:", output["errors"])
-
-    if output.get("warnings"):
-        print("GH warnings:", output["warnings"])
 
     # STEP 7: Decode meshes
     print("Decoding Grasshopper output...")
@@ -343,7 +341,7 @@ def automate_function(
     # STEP 8: Send panels to facade model
     print(f"Sending facade panels to '{function_inputs.facade_model_name}'...")
     panel_container = Base()
-    panel_container["panels"]        = speckle_meshes
+    panel_container["panels"] = speckle_meshes
     panel_container["@displayValue"] = speckle_meshes
     send_to_model(
         client, project_id,
