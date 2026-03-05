@@ -5,6 +5,7 @@ import json
 import os
 import sys
 
+import compute_rhino3d.Grasshopper as gh
 import compute_rhino3d.Util
 import requests
 import rhino3dm
@@ -357,7 +358,14 @@ def automate_function(
     # ------------------------------------------------------------------
     print(f"Running Grasshopper: {gh_path_abs}")
     try:
-        output = evaluate_gh_with_curves(compute_url, compute_api_key, gh_path_abs, encoded_curves)
+        curve_tree = gh.DataTree("curves")
+        curve_tree.Append([0], encoded_curves)
+        output = gh.EvaluateDefinition(gh_path_abs, [curve_tree])
+        if output is None:
+            automate_context.mark_run_failed(
+                "Rhino Compute returned empty response — GH solver may be down."
+            )
+            return
     except Exception as e:
         automate_context.mark_run_failed(f"Grasshopper evaluation failed: {e}")
         return
