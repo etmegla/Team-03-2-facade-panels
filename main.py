@@ -43,10 +43,9 @@ class FunctionInputs(AutomateBase):
         title="Facade Panels Model Name",
         description="Model to send GH-generated facade panels to, e.g. 'facade/panels'",
     )
-    compute_api_key: SecretStr | None = Field(
-        default=None,
+    compute_api_key: SecretStr = Field(
         title="Rhino Compute API Key",
-        description="Optional secret key used in Automate cloud when .env is unavailable.",
+        description="Secret key used to authenticate with Rhino Compute in Automate cloud.",
     )
     whisper_message: SecretStr = Field(
         title="Whisper message",
@@ -131,11 +130,10 @@ def automate_function(
     if not compute_api_key:
         key_source = "missing"
 
-    if function_inputs.compute_api_key is not None:
-        input_key = function_inputs.compute_api_key.get_secret_value().strip()
-        if input_key:
-            compute_api_key = input_key
-            key_source = "function input"
+    input_key = function_inputs.compute_api_key.get_secret_value().strip()
+    if input_key:
+        compute_api_key = input_key
+        key_source = "function input"
 
     print(f"Compute API key source: {key_source}")
 
