@@ -47,7 +47,7 @@ transport = ServerTransport(client=client, stream_id=PROJECT_ID)
 
 # Receive the actual model object
 print("Receiving model...")
-root_obj = operations.receive(latest.referencedObject, transport)
+root_obj = operations.receive(latest.referenced_object, transport)
 
 # Mock the context
 mock_context = MagicMock()
@@ -80,3 +80,9 @@ inputs = FunctionInputs(
 # ----------------------------------------------------
 print("\n--- Starting pipeline ---\n")
 automate_function(mock_context, inputs)
+
+# Debug: print all object types in the model
+all_objects = list(flatten_base(root_obj))
+print(f"Total objects: {len(all_objects)}")
+for obj in all_objects[:20]:
+    print(f"  {obj.speckle_type} — {type(obj).__name__}")
