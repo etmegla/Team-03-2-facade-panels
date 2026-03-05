@@ -378,14 +378,18 @@ def automate_function(
                 try:
                     decoded = rhino3dm.CommonObject.Decode(json.loads(item["data"]))
                     if isinstance(decoded, rhino3dm.Mesh):
-                        m = Mesh()
-                        m.vertices = [
+                        vertices = [
                             coord
                             for v in decoded.Vertices
                             for coord in (v.X, v.Y, v.Z)
                         ]
-                        m.faces = list(decoded.Faces)
-                        m.units = "m"
+                        faces = []
+                        for f in decoded.Faces:
+                            if f.IsQuad:
+                                faces.extend([4, f.A, f.B, f.C, f.D])
+                            else:
+                                faces.extend([3, f.A, f.B, f.C])
+                        m = Mesh(vertices=vertices, faces=faces, units="m")
                         speckle_meshes.append(m)
                 except Exception as e:
                     print(f"  Skipped item in branch {branch_key}: {e}")
