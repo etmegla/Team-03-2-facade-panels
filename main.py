@@ -287,6 +287,10 @@ if __name__ == "__main__":
     #   python main.py run example.function_inputs.json  (explicit)
     args = sys.argv[1:]
 
+    if args and args[0] == "generate_schema":
+        execute_automate_function(automate_function, FunctionInputs)
+        sys.exit(0)
+
     if len(args) == 1 and args[0] != "run":
         inputs_path = args[0]
     elif len(args) == 2 and args[0] == "run":
