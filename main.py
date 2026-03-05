@@ -30,10 +30,17 @@ from flatten import flatten_base
 # ----------------------------------------------------
 load_dotenv()
 
-COMPUTE_URL     = os.getenv("COMPUTE_URL", "").rstrip("/")
-COMPUTE_API_KEY = os.getenv("COMPUTE_API_KEY", "")
-SPECKLE_TOKEN   = os.getenv("SPECKLE_TOKEN", "")
-SPECKLE_SERVER  = os.getenv("SPECKLE_SERVER_URL", "https://app.speckle.systems")
+def _sanitize_env(value: str) -> str:
+    """Trim spaces and stray quotes from environment values."""
+    return value.strip().strip("\"").strip("'")
+
+
+COMPUTE_URL = _sanitize_env(os.getenv("COMPUTE_URL", "")).rstrip("/")
+COMPUTE_API_KEY = _sanitize_env(os.getenv("COMPUTE_API_KEY", ""))
+SPECKLE_TOKEN = _sanitize_env(os.getenv("SPECKLE_TOKEN", ""))
+SPECKLE_SERVER = _sanitize_env(
+    os.getenv("SPECKLE_SERVER_URL", "https://app.speckle.systems")
+)
 
 compute_rhino3d.Util.url    = COMPUTE_URL + "/"
 compute_rhino3d.Util.apiKey = COMPUTE_API_KEY
@@ -122,6 +129,12 @@ def automate_function(
 
     client     = automate_context.speckle_client
     project_id = automate_context.automation_run_data.project_id
+
+    if not COMPUTE_URL:
+        automate_context.mark_run_failed(
+            "COMPUTE_URL is empty. Set it in your environment/.env file."
+        )
+        return
 
     # STEP 1: Verify Rhino Compute is reachable
     print(f"Checking Rhino Compute at {COMPUTE_URL}...")
@@ -214,7 +227,7 @@ def automate_function(
     print("Decoding Grasshopper output...")
     speckle_meshes = []
     for value in output.get("values", []):
-        for branch_key, branch_items in value["InnerTree"].items():
+        for branch_key, branch_items in value.get("InnerTree", {}).items():
             for item in branch_items:
                 try:
                     decoded = rhino3dm.CommonObject.Decode(json.loads(item["data"]))
