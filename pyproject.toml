@@ -10,7 +10,7 @@ keywords = ["speckle", "automate", "rhino", "grasshopper", "facade", "aec"]
 dependencies = [
     "specklepy==3.1.0",
     "rhino3dm==8.17.0",
-    "compute-rhino3d==0.14.0",
+    "compute-rhino3d==0.12.2",
     "python-dotenv>=1.0.0",
     "requests>=2.32.0",
 ]
