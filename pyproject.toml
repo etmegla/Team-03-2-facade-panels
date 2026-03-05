@@ -8,7 +8,7 @@ license = "Apache-2.0"
 keywords = ["speckle", "automate", "rhino", "grasshopper", "facade", "aec"]
 
 dependencies = [
-    "specklepy==3.1.0",
+    "specklepy==3.2.4",
     "rhino3dm==8.17.0",
     "compute-rhino3d==0.12.2",
     "python-dotenv>=1.0.0",
