@@ -269,8 +269,13 @@ def automate_function(
                     "or provide a full URL (https://...) pointing to the file on Compute."
                 )
                 return
+        #curve_tree = gh.DataTree("curves")
+        #curve_tree.Append([0], encoded_curves)
         curve_tree = gh.DataTree("curves")
-        curve_tree.Append([0], encoded_curves)
+
+        for i, curve in enumerate(encoded_curves):
+            curve_tree.Append([i], [curve])
+
         output = gh.EvaluateDefinition(gh_path, [curve_tree])
         if output is None:
             automate_context.mark_run_failed(
