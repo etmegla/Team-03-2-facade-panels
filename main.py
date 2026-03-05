@@ -385,10 +385,11 @@ def automate_function(
                         ]
                         faces = []
                         for f in decoded.Faces:
-                            if f.IsQuad:
-                                faces.extend([4, f.A, f.B, f.C, f.D])
+                            a, b, c, d = f
+                            if c == d:
+                                faces.extend([3, a, b, c])
                             else:
-                                faces.extend([3, f.A, f.B, f.C])
+                                faces.extend([4, a, b, c, d])
                         m = Mesh(vertices=vertices, faces=faces, units="m")
                         speckle_meshes.append(m)
                 except Exception as e:
