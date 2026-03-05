@@ -151,38 +151,56 @@ def automate_function(
 
     TARGET_LAYER = "Floor Plate Curve"
 
-    def _layer_name(obj) -> str:
-        """Return the layer name for a Speckle object (handles v2 and v3 schemas)."""
-        # specklepy v3: objects may carry a 'layer' string attribute
-        layer = getattr(obj, "layer", None)
-        if isinstance(layer, str):
-            return layer
-        # Some connectors store it as 'renderMaterial' or nested; also try 'applicationId' path
-        # Fallback: walk parent chain via __parents if available
-        return ""
+    def collect_curves_from_layer(root, target_layer: str):
+        """
+        Walk the Speckle elements tree tracking the current layer name.
+        Rhino connector structure:
+          root
+            └── elements[] → Layer  (.name = "Floor Plate Curve")
+                  └── elements[] → Curve / Polyline / Line
+        """
+        matched = []
+        all_layer_names = set()
 
-    all_curves = [
-        obj
-        for obj in flatten_base(version_root_object)
-        if isinstance(obj, (Line, Polyline, Curve))
-    ]
-    print(f"  Total curves in model: {len(all_curves)}")
+        def _walk(obj, current_layer: str):
+            if obj is None:
+                return
+            # Check if this object is a layer container (has a name but isn't geometry)
+            obj_name = getattr(obj, "name", None)
+            speckle_type = getattr(obj, "speckle_type", "") or ""
+            is_geometry = isinstance(obj, (Line, Polyline, Curve))
 
-    # Filter to Floor Plate Curve layer — match full name or ends-with
-    slab_curves = [
-        obj for obj in all_curves
-        if TARGET_LAYER.lower() in _layer_name(obj).lower()
-    ]
+            if obj_name and not is_geometry:
+                current_layer = obj_name
 
-    # If layer filtering returned nothing, log all unique layer names found to help debug
-    if not slab_curves:
-        unique_layers = sorted({_layer_name(obj) for obj in all_curves})
-        print(f"  WARNING: No curves matched layer '{TARGET_LAYER}'.")
-        print(f"  Layer names found on curve objects: {unique_layers}")
-        print("  Falling back to ALL curves.")
-        slab_curves = all_curves
+            if current_layer:
+                all_layer_names.add(current_layer)
 
+            if is_geometry:
+                if target_layer.lower() in current_layer.lower():
+                    matched.append(obj)
+                return
+
+            # Walk elements / @elements children
+            elements = getattr(obj, "elements", getattr(obj, "@elements", None))
+            if elements:
+                for child in elements:
+                    _walk(child, current_layer)
+
+        _walk(root, "")
+        return matched, all_layer_names
+
+    slab_curves, all_layer_names = collect_curves_from_layer(version_root_object, TARGET_LAYER)
+    print(f"  All layer names found: {sorted(all_layer_names)}")
     print(f"  Floor Plate curves selected: {len(slab_curves)}")
+
+    if not slab_curves:
+        print(f"  WARNING: No curves matched layer '{TARGET_LAYER}'. Falling back to ALL curves.")
+        slab_curves = [
+            obj for obj in flatten_base(version_root_object)
+            if isinstance(obj, (Line, Polyline, Curve))
+        ]
+        print(f"  Fallback total curves: {len(slab_curves)}")
 
     if not slab_curves:
         automate_context.mark_run_failed(
@@ -232,11 +250,28 @@ def automate_function(
         return
 
     # STEP 6: Run Grasshopper
-    print(f"Running Grasshopper: {function_inputs.gh_file_path}")
+    gh_path = function_inputs.gh_file_path
+    print(f"Running Grasshopper: {gh_path}")
     try:
+        # If it's a URL, EvaluateDefinition uses it as a pointer (file must exist on Compute server)
+        # If it's a local path, the file must exist inside the Docker container (committed to repo)
+        if not gh_path.startswith("http"):
+            if not os.path.isfile(gh_path):
+                automate_context.mark_run_failed(
+                    f"Grasshopper file not found: '{gh_path}'. "
+                    "Either commit the .gh file to the repo at that path, "
+                    "or provide a full URL (https://...) pointing to the file on Compute."
+                )
+                return
         curve_tree = gh.DataTree("curves")
         curve_tree.Append([0], encoded_curves)
-        output = gh.EvaluateDefinition(function_inputs.gh_file_path, [curve_tree])
+        output = gh.EvaluateDefinition(gh_path, [curve_tree])
+        if output is None:
+            automate_context.mark_run_failed(
+                "Rhino Compute returned an empty response. "
+                "Check that the .gh file path/URL is correct and the file is valid."
+            )
+            return
     except Exception as e:
         automate_context.mark_run_failed(f"Grasshopper evaluation failed: {e}")
         return
