@@ -43,6 +43,11 @@ class FunctionInputs(AutomateBase):
         title="Facade Panels Model Name",
         description="Model to send GH-generated facade panels to, e.g. 'facade/panels'",
     )
+    compute_api_key: SecretStr | None = Field(
+        default=None,
+        title="Rhino Compute API Key",
+        description="Optional secret key used in Automate cloud when .env is unavailable.",
+    )
     whisper_message: SecretStr = Field(
         title="Whisper message",
         description="Unused — required by Speckle Automate template.",
@@ -122,9 +127,14 @@ def automate_function(
     compute_url     = config["compute_url"]
     compute_api_key = config["compute_api_key"]
 
+    if function_inputs.compute_api_key is not None:
+        input_key = function_inputs.compute_api_key.get_secret_value().strip()
+        if input_key:
+            compute_api_key = input_key
+
     if not compute_api_key:
         automate_context.mark_run_failed(
-            "COMPUTE_API_KEY is missing. Set it in your .env or environment variables."
+            "COMPUTE_API_KEY is missing. Set it in Function Inputs or environment variables."
         )
         return
 
