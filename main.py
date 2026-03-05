@@ -272,40 +272,44 @@ def automate_function(
 
     # STEP 6: Run Grasshopper
     gh_path = function_inputs.gh_file_path
+
     print(f"Running Grasshopper: {gh_path}")
+    print("GH path:", gh_path)
+    print("File exists:", os.path.isfile(gh_path))
+
     try:
-        # If it's a URL, EvaluateDefinition uses it as a pointer (file must exist on Compute server)
-        # If it's a local path, the file must exist inside the Docker container (committed to repo)
+        # If it's a URL, EvaluateDefinition uses it as a pointer
+        # If it's a local path, the file must exist inside the automation container
         if not gh_path.startswith("http"):
             if not os.path.isfile(gh_path):
                 automate_context.mark_run_failed(
                     f"Grasshopper file not found: '{gh_path}'. "
                     "Either commit the .gh file to the repo at that path, "
-                    "or provide a full URL (https://...) pointing to the file on Compute."
+                    "or provide a full URL pointing to the file."
                 )
                 return
-        #curve_tree = gh.DataTree("curves")
-        #curve_tree.Append([0], encoded_curves)
-        curve_tree = gh.DataTree("curves")
 
-        for i, curve in enumerate(encoded_curves):
-            curve_tree.Append([i], [curve])
+        # Send curves to Grasshopper
+        curve_tree = gh.DataTree("curves")
+        curve_tree.Append([0], encoded_curves)
 
         output = gh.EvaluateDefinition(gh_path, [curve_tree])
+
         if output is None:
             automate_context.mark_run_failed(
-                "Rhino Compute returned an empty response. "
-                "Check that the .gh file path/URL is correct and the file is valid."
+                "Rhino Compute returned an empty response."
             )
             return
+
     except Exception as e:
         automate_context.mark_run_failed(f"Grasshopper evaluation failed: {e}")
         return
 
     if output.get("errors"):
-        print("  GH errors:", output["errors"])
+        print("GH errors:", output["errors"])
+
     if output.get("warnings"):
-        print("  GH warnings:", output["warnings"])
+        print("GH warnings:", output["warnings"])
 
     # STEP 7: Decode meshes
     print("Decoding Grasshopper output...")
